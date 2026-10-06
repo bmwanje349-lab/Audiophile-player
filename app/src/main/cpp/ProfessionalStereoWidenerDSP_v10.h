@@ -1640,6 +1640,7 @@ private:
 
 class StereoLinkedTruePeakLimiter {
 public:
+    static constexpr float kDefaultSafetyMarginDb = 1.7f;
     static constexpr std::size_t kMaxLookahead = 512;
     static constexpr std::size_t kOutputReserveSamples = 2;
     static constexpr std::size_t kMaxDelayBuffer = 2048;
