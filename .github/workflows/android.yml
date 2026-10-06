@@ -17,6 +17,8 @@ jobs:
           java-version: "17"
 
       - uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
 
       - name: Install SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1"
