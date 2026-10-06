@@ -18,7 +18,9 @@
         <activity
             android:name=".DspActivity"
             android:exported="false" />
-
+        <activity
+    android:name=".vocalremoverui.VocalRemoverActivity"
+    android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true">
