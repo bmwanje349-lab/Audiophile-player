@@ -1,100 +1,118 @@
-# Audiophile Player
+# Audiophile Player — Premium AI Vocal Remover (MDX-Net LiteRT)
 
-Android Studio project for a local music player with a custom PCM DSP chain:
+This package replaces the previous HT-Demucs/ONNX neural backend with an on-device MDX-Net LiteRT backend while leaving the existing `PremiumVocalRemoverDSP` and stereo-widener DSP untouched.
 
-`Media3 decoder → 10-band Graphic EQ → 16-band Parametric EQ → curve makeup → v10 Stereo Widener → audio output`
+## Runtime architecture
 
-## UI / visual direction
+```text
+Decoded stereo PCM
+        |
+        v
+Source sample rate
+        |
+        v
+44.1 kHz resampling (existing WindowedSincResampler)
+        |
+        v
+MDX-Net 9482 LiteRT (default, ~30 MB)
+        |
+        v
+Host STFT -> model -> iSTFT
+        |
+        v
+Vocal stem @ original sample rate
+        |
+        +----------------------+
+        |                      |
+        v                      v
+mix ------------------> PremiumVocalRemoverDSP
+                            |
+                            v
+                     latency-compensated output
+```
 
-The app has been redesigned as a conventional premium music player rather than a DSP control panel.
+The default model is `UVR_MDXNET_9482.fp16acc.tflite`. It is a vocal-separation MDX-Net profile intended for a much smaller on-device footprint than the previous 166 MB HT-Demucs model. A higher-quality `UVR-MDX-NET-Voc_FT.fp16acc.tflite` profile is also wired into the backend for builds that prefer quality over download/storage size. The published MDX LiteRT variants are approximately 30 MB and 67 MB respectively; the source repository describes 9482 as the smaller/faster profile and Voc_FT as the vocal fine-tune. citeturn787695search0turn985663search0turn985663search1
 
-### Midnight Audiophile theme
+The MDX models operate on 44.1 kHz audio with 256 time frames per inference chunk. The host performs STFT/iSTFT because the model graph itself does not perform the audio transform. The 9482 profile uses 4096-point FFT / 2048 frequency bins; Voc_FT uses 6144-point FFT / 3072 frequency bins. citeturn787695search0turn787695search1turn175423view1
 
-- Near-black background
-- Graphite/charcoal surfaces
-- Soft-white primary text
-- Muted gray secondary text
-- Cool cyan-blue accent
-- Rounded, restrained cards and controls
-- Minimal animation and no neon/RGB-heavy treatment
+## Why 9482 is the default
 
-### Main navigation
+The goal of this integration is to keep the feature practical on Android without changing the premium post-processing DSP. The 9482 model cuts the neural download/storage footprint to roughly one-sixth of the previous 166 MB model. The `VOC_FT` profile remains available as the quality-focused option. For a premium shipping build, benchmark both on the target device and representative music before locking the default. citeturn959857search3turn787695search0
 
-- **Home** — greeting, continue listening, recently added music, and a compact DSP-engine explanation.
-- **Library** — local MediaStore music, scan/rescan, track list, and persistent mini-player.
-- **Sound** — separate entry point for the three audio processors.
-- **Settings** — playback, library, audio/output, DSP, appearance/theme information, notifications, and about.
+## Android dependencies
 
-### Now Playing
+Add to the app module:
 
-The full player opens from the persistent mini-player. It contains:
+```kotlin
+implementation("com.google.ai.edge.litert:litert:2.2.0")
+implementation("com.github.wendykierp:JTransforms:3.1")
+```
 
-- Large artwork area
-- Track / artist information
-- Seek bar and timestamps
-- Previous / play / next
-- Shuffle / repeat / queue
-- Direct **Open Sound** access
-- Playback-engine information
+LiteRT 2.2.0 is the current documented Android artifact and the modern `CompiledModel` API supports CPU/GPU/NPU acceleration. citeturn902221search9turn959857search2
 
-The mini-player is hidden on the full Now Playing screen and remains visible on the other app sections.
+The host must also declare:
 
-## Sound architecture
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+```
 
-Sound shaping is intentionally kept out of Settings. The Sound area has three separate screens:
+The model is downloaded to app-private storage, written to a `.part` file, SHA-256 verified, and then atomically renamed into place. The default 9482 checksum is pinned in `MdxModelSpec.kt`:
 
-### Graphic Equalizer
+```text
+2a07e11db13a11ca4900a54b4a316ef67931e993a6a3d19444bccbbeb9b445ee
+```
 
-10 fixed bands:
+The higher-quality Voc_FT checksum is also pinned there:
 
-`31 / 62 / 125 / 250 / 500 / 1k / 2k / 4k / 8k / 16k Hz`
+```text
+5ef47e3b3bafa14357532c0a3f6c5f18444d94b6efe3fd62b3d13f80051f1e58
+```
 
-Fixed Q 1.40, ±12 dB, presets, enable/bypass control, and a dedicated response graph.
+## Existing premium DSP was not changed
 
-### Parametric Equalizer
+These production files are carried over unchanged from the repaired integration:
 
-16 independent bands with:
+- `PremiumVocalRemoverDSP.h`
+- `native_vocal_remover.cpp`
+- `ProfessionalStereoWidenerDSP_v10.h`
 
-- Bell / shelf / high-pass / low-pass / notch filtering
-- Frequency, gain and Q controls
-- Per-band enable
-- Minimum-phase processing
-- Optional 257 / 513 / 1025-tap linear-phase FIR
-- Independent curve-makeup control
+The neural backend only supplies the vocal stem. `PremiumVocalRemoverDSP` still performs the existing depth, focus/transient protection, dry/wet, stem gain, output gain, ceiling, and latency-compensation work.
 
-### Stereo Widener
+## Important integration fix
 
-The professional v10 engine is presented through musical controls rather than exposing its internal engineering details.
+The UI no longer forces the pipeline to 44.1 kHz. It constructs the pipeline from the decoded track's actual sample rate. The MDX backend then resamples internally to 44.1 kHz and returns the separated stem to the source rate. This avoids a sample-rate mismatch on 48/96 kHz tracks.
 
-Core controls:
+## Testing completed in this environment
 
-- Width
-- Effect mix
-- Bass mono/protection point
+Passed:
 
-Advanced controls:
+- existing separator / OLA / chunk-edge tests
+- streaming separator regression
+- MDX production Kotlin source compile against API stubs
+- 9482 and Voc_FT STFT/iSTFT numerical reference checks
+- 10% crossfade identity check
+- native CMake build
+- JNI create/process/destroy test
+- neural depth/gain regression
+- full native DSP subtraction chain
+- 44.1 / 48 / 96 kHz block/reset regression
+- ASan + UBSan JNI regression
+- ThreadSanitizer setter/process stress
 
-- Low/high crossover
-- Haas delay and mix
-- Output gain
-- Limiter ceiling
-- Automatic level matching
-- Current DSP latency
+Representative results:
 
-## DSP
+```text
+9482 STFT/iSTFT round-trip: 113.22 dB SNR
+Voc_FT STFT/iSTFT round-trip: 115.24 dB SNR
+MDX crossfade identity max error: 1.735e-18
+Neural correlated-accompaniment relative error: 6.19e-8
+Full native chain relative RMS error: 5.20e-8
+ASan/UBSan: PASS
+TSAN: PASS (exit 0)
+```
 
-The native sources in `app/src/main/cpp/` contain the corrected PEQ/GEQ engine and the ProfessionalStereoWidenerDSP_v10 integration used by the player service.
-The native CMake targets use 16-KB ELF load-segment alignment so the packaged `.so` libraries are prepared for Android devices using 16-KB memory pages.
+## Remaining validation gap
 
-The playback service uses Media3 `MediaSessionService` so playback and the custom DSP runtime live outside the Activity.
+The actual 30 MB model binary could not be executed in this sandbox because direct model download/runtime access was unavailable. A real-model smoke test is included in `.github/workflows/mdx-model-smoke.yml`; it downloads the pinned model, verifies the checksum, checks the LiteRT tensor contract, executes inference, and rejects non-finite/implausible output. LiteRT's Python package is officially available as `ai-edge-litert`. citeturn902221search0turn902221search1
 
-## Verification / build status
-
-The native DSP regression and safety checks used during development passed before packaging. This environment does **not** contain a complete Android SDK/Gradle repository-access environment, so a full Android APK build was not claimed or performed here. The included GitHub Actions workflow provisions JDK 17, Android SDK API 36 (compileSdk 36, targetSdk 35), CMake 3.22.1, NDK r27d, accepts SDK licenses, and runs the Gradle 8.9 wrapper.
-
-The UI source was also passed through Kotlin compiler parsing checks; expected Android/Media3/Material symbols cannot be resolved here because those Android dependencies are not installed in this environment.
-
-Open the project in Android Studio or push it to GitHub. The repository includes the required Gradle Wrapper files; GitHub Actions also provisions the required Android SDK/NDK/CMake toolchain automatically.
-
-
-Build validation release: 0.3.1.
+The final production acceptance test should still be run on the target Android hardware, measuring real inference time, memory, thermal behavior, CPU/GPU utilization, vocal bleed, accompaniment damage, and long-track stability.

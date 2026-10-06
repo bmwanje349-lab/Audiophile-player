@@ -1,0 +1,59 @@
+Audiophile Player — MDX-Net integration audit
+Date: 2026-10-06
+
+LOCAL TEST RESULTS
+==================
+
+1. Existing separator/chunk/streaming regression
+   PASS
+   - core OLA max error: 7.45e-9
+   - chunk/tail edge cases: PASS
+   - streaming separator: PASS
+
+2. MDX production Kotlin source compile (API stubs)
+   PASS
+
+3. MDX host numerical reference
+   PASS
+   - 9482 STFT/iSTFT round-trip: 113.22 dB SNR
+   - Voc_FT STFT/iSTFT round-trip: 115.24 dB SNR
+   - 10% crossfade identity max error: 1.735e-18
+
+4. Native CMake compile
+   PASS
+
+5. Native JNI/neural/full-chain/multi-rate regression
+   PASS
+   - JNI create/process/destroy: PASS
+   - neural correlated-accompaniment relative error: 6.1887388e-8
+   - full-chain relative RMS error: 5.2045800e-8
+   - full-chain max sample error: 1.4901161e-8
+   - 44.1/48/96 kHz block/reset: PASS
+
+6. ASan/UBSan JNI regression
+   PASS
+   - no AddressSanitizer/UndefinedBehaviorSanitizer findings
+
+7. ThreadSanitizer setter/process stress
+   PASS
+   - process exit code: 0
+
+DSP INTEGRITY
+=============
+The following existing production DSP files match the repaired baseline hashes and were not modified:
+
+PremiumVocalRemoverDSP.h
+bb59b94169e974bd02dcd011228775862340b6ee07487790e01c3d6cb05c1cb7
+
+native_vocal_remover.cpp
+416a52b1cdb0182b5b88a82e892b5014798f6f8483e43a6e6211d9c4a09dac0b
+
+ProfessionalStereoWidenerDSP_v10.h
+46da8a0ace5e2e47153f0341bab5e521f9f0206c1138dba6e3df7672b987387b
+
+REAL MODEL STATUS
+=================
+The actual 9482 .tflite binary could not be downloaded/executed in this sandbox.
+The source package therefore includes a GitHub Actions smoke test that downloads the
+pinned binary, verifies SHA-256, checks the tensor contract, and runs one real inference.
+This is the remaining external validation step.
