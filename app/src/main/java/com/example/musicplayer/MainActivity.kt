@@ -493,35 +493,73 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildSoundHub(): View {
-        val scroll = androidx.core.widget.NestedScrollView(this)
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(8), 0, dp(24))
-        }
-
-        root.addView(TextView(this).apply {
-            text = "Shape your sound"
-            setTextColor(TEXT)
-            textSize = 28f
-            setTypeface(null, Typeface.BOLD)
-        })
-        root.addView(TextView(this).apply {
-            text = "Three separate processors. One clean signal chain."
-            setTextColor(TEXT_SECONDARY)
-            textSize = 14f
-            setPadding(0, dp(4), 0, dp(18))
-        })
-
-        root.addView(soundCard("Graphic Equalizer", "10-band quick tone shaping", "31 Hz  →  16 kHz", "graphic"))
-        root.addView(soundCard("Parametric Equalizer", "16-band precision control", "Frequency  •  Gain  •  Q  •  Filter", "parametric"))
-        root.addView(soundCard("Stereo Widener", "Professional spatial processing", "Width  •  bass protection  •  depth", "stereo"))
-        root.addView(sectionLabel("Signal chain"))
-        root.addView(infoCard("Processing order", "Graphic EQ  →  Parametric EQ  →  makeup gain  →  v10 Stereo Widener  →  final output path"))
-        root.addView(statusCard())
-
-        scroll.addView(root)
-        return scroll
+    val scroll = androidx.core.widget.NestedScrollView(this)
+    val root = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, dp(8), 0, dp(24))
     }
+
+    root.addView(TextView(this).apply {
+        text = "Shape your sound"
+        setTextColor(TEXT)
+        textSize = 28f
+        setTypeface(null, Typeface.BOLD)
+    })
+
+    root.addView(TextView(this).apply {
+        text = "Three separate processors. One clean signal chain."
+        setTextColor(TEXT_SECONDARY)
+        textSize = 14f
+        setPadding(0, dp(4), 0, dp(18))
+    })
+
+    root.addView(
+        soundCard(
+            "Graphic Equalizer",
+            "10-band quick tone shaping",
+            "31 Hz  →  16 kHz",
+            "graphic"
+        )
+    )
+
+    root.addView(
+        soundCard(
+            "Parametric Equalizer",
+            "16-band precision control",
+            "Frequency  •  Gain  •  Q  •  Filter",
+            "parametric"
+        )
+    )
+
+    root.addView(
+        soundCard(
+            "Stereo Widener",
+            "Professional spatial processing",
+            "Width  •  bass protection  •  depth",
+            "stereo"
+        )
+    )
+
+    root.addView(
+        VocalRemoverLaunchCard.build(root) {
+            launchVocalRemover()
+        }
+    )
+
+    root.addView(sectionLabel("Signal chain"))
+
+    root.addView(
+        infoCard(
+            "Processing order",
+            "Graphic EQ  →  Parametric EQ  →  makeup gain  →  v10 Stereo Widener  →  final output path"
+        )
+    )
+
+    root.addView(statusCard())
+
+    scroll.addView(root)
+    return scroll
+}
 
     private fun soundCard(title: String, subtitle: String, detail: String, type: String): View {
         val card = MaterialCardView(this).apply {
