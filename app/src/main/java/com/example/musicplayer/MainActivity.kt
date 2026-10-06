@@ -991,7 +991,14 @@ class MainActivity : AppCompatActivity() {
     private fun launchDspHub() {
         startActivity(Intent(this, DspActivity::class.java).putExtra(DspActivity.EXTRA_SECTION, "hub"))
     }
-
+    private fun launchVocalRemover() {
+    startActivity(
+        Intent(
+            this,
+            vocalremoverui.VocalRemoverActivity::class.java
+        )
+    )
+}
     private fun actionButton(icon: Int, description: String, listener: () -> Unit): ImageButton = ImageButton(this).apply {
         setImageResource(icon)
         setColorFilter(TEXT)
