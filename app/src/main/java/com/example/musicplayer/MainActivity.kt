@@ -661,7 +661,7 @@ class MainActivity : AppCompatActivity() {
         text.addView(TextView(this).apply { this.text = title; setTextColor(TEXT); textSize = 15f; setTypeface(null, Typeface.BOLD) })
         text.addView(TextView(this).apply { this.text = summary; setTextColor(TEXT_SECONDARY); textSize = 12f; setPadding(0, dp(2), 0, 0) })
         row.addView(text, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(TextView(this).apply { text = "›"; setTextColor(MUTED); textSize = 28f })
+        row.addView(TextView(this).apply { this.text = "›"; setTextColor(MUTED); textSize = 28f })
         return row
     }
 
