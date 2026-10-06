@@ -36,25 +36,35 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
+
       - name: Show project layout
         run: |
           pwd
           ls -la
+
           echo "--- app folder ---"
           ls -la app || echo "NO app FOLDER"
+
           echo "--- app/build.gradle.kts (first 12 lines) ---"
           head -12 app/build.gradle.kts || echo "NO app/build.gradle.kts"
+
           echo "--- settings ---"
           cat settings.gradle.kts
+
           echo "--- all build files ---"
           find . -name "build.gradle*" -not -path "./.git/*"
+
           echo "--- gradle projects ---"
-          gradle projects --console=plain --no-daemon || true
+          gradle projects --console=plain --no-daemon
+
+          echo "--- app tasks ---"
+          gradle :app:tasks --all --console=plain --no-daemon
+
       - name: Build Debug APK
         run: |
           set +e
 
-          gradle assembleDebug \
+          gradle :app:assembleDebug \
             --console=plain \
             --stacktrace \
             --no-daemon \
@@ -70,6 +80,7 @@ jobs:
             build.log | head -80
 
           echo "======================================================"
+
           exit "$status"
 
       - name: Upload Debug APK
