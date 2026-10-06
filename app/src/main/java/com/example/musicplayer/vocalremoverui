@@ -14,7 +14,7 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
-import com.bmwanje.audiophile.vocalremover.ModelManager
+import import com.bmwanje.audiophile.vocalremover.MdxModelManager
 import com.bmwanje.audiophile.vocalremover.VocalRemoverPipeline
 import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
 import java.util.Locale
