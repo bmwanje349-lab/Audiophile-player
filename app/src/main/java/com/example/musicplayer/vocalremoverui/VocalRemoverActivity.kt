@@ -3,6 +3,7 @@ package com.example.musicplayer.vocalremoverui
 import android.content.ComponentName
 import android.net.Uri
 import android.os.Bundle
+import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
@@ -10,7 +11,6 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.example.musicplayer.PlaybackService
-import com.example.musicplayer.TrackItem
 import com.google.common.util.concurrent.ListenableFuture
 
 class VocalRemoverActivity :
@@ -34,9 +34,13 @@ class VocalRemoverActivity :
         vocalRemoverUi =
             VocalRemoverUi(this)
 
-        setContentView(
-            vocalRemoverUi.build(this)
+        val root = FrameLayout(this)
+
+        root.addView(
+            vocalRemoverUi.build(root)
         )
+
+        setContentView(root)
 
         connectController()
     }
