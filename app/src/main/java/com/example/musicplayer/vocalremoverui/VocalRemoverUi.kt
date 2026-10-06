@@ -691,9 +691,9 @@ class VocalRemoverUi(
 
         val seek =
             SeekBar(status.context).apply {
-                max = max - min
-                progress =
-                    (initial - min).coerceIn(0, max - min)
+                this.max = max - min
+progress =
+    (initial - min).coerceIn(0, this.max)
 
                 setOnSeekBarChangeListener(
                     object :
