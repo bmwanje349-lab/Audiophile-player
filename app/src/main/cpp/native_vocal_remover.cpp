@@ -1,129 +1,329 @@
-package com.bmwanje.audiophile.vocalremover
+#include <jni.h>
+#include <cstdint>
+#include <memory>
 
-/** JNI bridge to the corrected PremiumVocalRemoverDSP. */
-class NativeVocalRemover(sampleRate: Int) : AutoCloseable {
-    private var handle: Long = nativeCreate(sampleRate.toDouble()).also { check(it != 0L) { "Failed to create native vocal-remover engine" } }
+#include "PremiumVocalRemoverDSP.h"
 
-    fun setDepth(value: Float) = nativeSetDepth(requireHandle(), value)
-    fun setFocus(value: Float) = nativeSetFocus(requireHandle(), value)
-    fun setTransientProtection(value: Float) = nativeSetTransientProtection(requireHandle(), value)
-    fun setStemGainDb(db: Float) = nativeSetStemGainDb(requireHandle(), db)
-    fun setDryWet(value: Float) = nativeSetDryWet(requireHandle(), value)
-    fun setOutputGainDb(db: Float) = nativeSetOutputGainDb(requireHandle(), db)
-    fun setCeilingDb(db: Float) = nativeSetCeilingDb(requireHandle(), db)
+namespace {
 
-    fun processBlock(
-        mixL: FloatArray,
-        mixR: FloatArray,
-        vocalL: FloatArray,
-        vocalR: FloatArray,
-        outL: FloatArray,
-        outR: FloatArray,
-    ) {
-        require(mixL.size == mixR.size && vocalL.size == mixL.size && vocalR.size == mixL.size)
-        require(outL.size >= mixL.size && outR.size >= mixL.size)
-        nativeProcess(
-            requireHandle(), mixL, mixR, vocalL, vocalR, outL, outR, mixL.size,
-        )
+using ProfessionalDSP::PremiumVocalRemoverDSP;
+
+struct Engine {
+    PremiumVocalRemoverDSP dsp;
+};
+
+Engine* fromHandle(jlong handle) noexcept {
+    return reinterpret_cast<Engine*>(
+        static_cast<std::uintptr_t>(handle)
+    );
+}
+
+void throwIllegalState(JNIEnv* env, const char* message) noexcept {
+    jclass cls = env->FindClass("java/lang/IllegalStateException");
+    if (cls != nullptr) {
+        env->ThrowNew(cls, message);
+    }
+}
+
+void throwIllegalArg(JNIEnv* env, const char* message) noexcept {
+    jclass cls = env->FindClass("java/lang/IllegalArgumentException");
+    if (cls != nullptr) {
+        env->ThrowNew(cls, message);
+    }
+}
+
+} // namespace
+
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_com_bmwanje_audiophile_vocalremover_NativeVocalRemover_nativeCreate(
+    JNIEnv*,
+    jobject,
+    jdouble sampleRate
+) noexcept {
+    try {
+        auto* engine = new Engine();
+        engine->dsp.prepare(sampleRate);
+
+        return static_cast<jlong>(
+            reinterpret_cast<std::uintptr_t>(engine)
+        );
+    } catch (...) {
+        return 0;
+    }
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_bmwanje_audiophile_vocalremover_NativeVocalRemover_nativeDestroy(
+    JNIEnv*,
+    jobject,
+    jlong handle
+) noexcept {
+    delete fromHandle(handle);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_bmwanje_audiophile_vocalremover_NativeVocalRemover_nativeReset(
+    JNIEnv* env,
+    jobject,
+    jlong handle
+) noexcept {
+    auto* engine = fromHandle(handle);
+
+    if (!engine) {
+        throwIllegalState(env, "Invalid vocal-remover handle");
+        return;
     }
 
-    fun reset() = nativeReset(requireHandle())
-    fun latencySamples(): Int = nativeLatency(requireHandle())
+    engine->dsp.reset();
+}
 
-    /**
-     * Offline render. The native DSP latency is removed so the returned audio
-     * has exactly the same number of samples and timeline as the input.
-     */
-    fun renderOffline(
-        mix: VocalSeparatorCore.Stereo,
-        vocals: VocalSeparatorCore.Stereo,
-        blockSize: Int = 4096,
-    ): VocalSeparatorCore.Stereo {
-        require(mix.size == vocals.size)
-        require(blockSize > 0)
-        reset()
-        nativeSetNeuralMode(requireHandle(), true)
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_bmwanje_audiophile_vocalremover_NativeVocalRemover_nativeLatency(
+    JNIEnv* env,
+    jobject,
+    jlong handle
+) noexcept {
+    auto* engine = fromHandle(handle);
 
-        val n = mix.size
-        val latency = latencySamples()
-        val tail = latency + 2048
-        val rawL = FloatArray(n + tail)
-        val rawR = FloatArray(n + tail)
-        val inL = FloatArray(blockSize)
-        val inR = FloatArray(blockSize)
-        val vL = FloatArray(blockSize)
-        val vR = FloatArray(blockSize)
-        val oL = FloatArray(blockSize)
-        val oR = FloatArray(blockSize)
-        var rawPos = 0
-        var pos = 0
-
-        while (pos < n) {
-            val count = minOf(blockSize, n - pos)
-            java.lang.System.arraycopy(mix.left, pos, inL, 0, count)
-            java.lang.System.arraycopy(mix.right, pos, inR, 0, count)
-            java.lang.System.arraycopy(vocals.left, pos, vL, 0, count)
-            java.lang.System.arraycopy(vocals.right, pos, vR, 0, count)
-            nativeProcess(requireHandle(), inL, inR, vL, vR, oL, oR, count)
-            java.lang.System.arraycopy(oL, 0, rawL, rawPos, count)
-            java.lang.System.arraycopy(oR, 0, rawR, rawPos, count)
-            rawPos += count
-            pos += count
-        }
-
-        val zero = FloatArray(blockSize)
-        var remaining = tail
-        while (remaining > 0) {
-            val count = minOf(blockSize, remaining)
-            nativeProcess(requireHandle(), zero, zero, zero, zero, oL, oR, count)
-            java.lang.System.arraycopy(oL, 0, rawL, rawPos, count)
-            java.lang.System.arraycopy(oR, 0, rawR, rawPos, count)
-            rawPos += count
-            remaining -= count
-        }
-
-        val alignedL = FloatArray(n)
-        val alignedR = FloatArray(n)
-        java.lang.System.arraycopy(rawL, latency, alignedL, 0, n)
-        java.lang.System.arraycopy(rawR, latency, alignedR, 0, n)
-        return VocalSeparatorCore.Stereo(alignedL, alignedR)
+    if (!engine) {
+        throwIllegalState(env, "Invalid vocal-remover handle");
+        return 0;
     }
 
-    private fun requireHandle(): Long {
-        check(handle != 0L) { "NativeVocalRemover is closed" }
-        return handle
+    return static_cast<jint>(
+        engine->dsp.latencySamples()
+    );
+}
+
+#define JNI_SETTER(name, method)                                      \
+extern "C"                                                           \
+JNIEXPORT void JNICALL                                                \
+Java_com_bmwanje_audiophile_vocalremover_NativeVocalRemover_##name(  \
+    JNIEnv* env,                                                      \
+    jobject,                                                          \
+    jlong handle,                                                     \
+    jfloat value                                                       \
+) noexcept {                                                          \
+    auto* engine = fromHandle(handle);                                \
+    if (!engine) {                                                    \
+        throwIllegalState(env, "Invalid vocal-remover handle");       \
+        return;                                                       \
+    }                                                                  \
+    engine->dsp.method(value);                                        \
+}
+
+JNI_SETTER(nativeSetDepth, setDepth)
+JNI_SETTER(nativeSetFocus, setVocalFocus)
+JNI_SETTER(nativeSetTransientProtection, setTransientProtection)
+JNI_SETTER(nativeSetStemGainDb, setVocalStemGainDb)
+JNI_SETTER(nativeSetDryWet, setDryWet)
+JNI_SETTER(nativeSetOutputGainDb, setOutputGainDb)
+JNI_SETTER(nativeSetCeilingDb, setOutputCeilingDb)
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_bmwanje_audiophile_vocalremover_NativeVocalRemover_nativeSetNeuralMode(
+    JNIEnv* env,
+    jobject,
+    jlong handle,
+    jboolean enabled
+) noexcept {
+    auto* engine = fromHandle(handle);
+
+    if (!engine) {
+        throwIllegalState(env, "Invalid vocal-remover handle");
+        return;
     }
 
-    override fun close() {
-        if (handle != 0L) {
-            nativeDestroy(handle)
-            handle = 0L
-        }
+    engine->dsp.setNeuralStemMode(
+        enabled == JNI_TRUE
+    );
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_bmwanje_audiophile_vocalremover_NativeVocalRemover_nativeProcess(
+    JNIEnv* env,
+    jobject,
+    jlong handle,
+    jfloatArray mixL,
+    jfloatArray mixR,
+    jfloatArray vocalL,
+    jfloatArray vocalR,
+    jfloatArray outL,
+    jfloatArray outR,
+    jint n
+) noexcept {
+    auto* engine = fromHandle(handle);
+
+    if (!engine) {
+        throwIllegalState(env, "Invalid vocal-remover handle");
+        return;
     }
 
-    private external fun nativeCreate(sampleRate: Double): Long
-    private external fun nativeDestroy(handle: Long)
-    private external fun nativeReset(handle: Long)
-    private external fun nativeLatency(handle: Long): Int
-    private external fun nativeSetDepth(handle: Long, value: Float)
-    private external fun nativeSetFocus(handle: Long, value: Float)
-    private external fun nativeSetTransientProtection(handle: Long, value: Float)
-    private external fun nativeSetStemGainDb(handle: Long, db: Float)
-    private external fun nativeSetDryWet(handle: Long, value: Float)
-    private external fun nativeSetOutputGainDb(handle: Long, db: Float)
-    private external fun nativeSetCeilingDb(handle: Long, db: Float)
-    private external fun nativeSetNeuralMode(handle: Long, enabled: Boolean)
-    private external fun nativeProcess(
-        handle: Long,
-        mixL: FloatArray,
-        mixR: FloatArray,
-        vocalL: FloatArray,
-        vocalR: FloatArray,
-        outL: FloatArray,
-        outR: FloatArray,
-        n: Int,
-    )
-    companion object {
-        init { System.loadLibrary("audiophile_vocal_remover") }
+    if (n <= 0 ||
+        !mixL ||
+        !mixR ||
+        !vocalL ||
+        !vocalR ||
+        !outL ||
+        !outR) {
+        throwIllegalArg(env, "Invalid audio arrays");
+        return;
     }
+
+    const jsize needed = static_cast<jsize>(n);
+
+    if (env->GetArrayLength(mixL) < needed ||
+        env->GetArrayLength(mixR) < needed ||
+        env->GetArrayLength(vocalL) < needed ||
+        env->GetArrayLength(vocalR) < needed ||
+        env->GetArrayLength(outL) < needed ||
+        env->GetArrayLength(outR) < needed) {
+        throwIllegalArg(
+            env,
+            "Audio array shorter than n"
+        );
+        return;
+    }
+
+    jboolean copies[6] = {};
+
+    float* a =
+        env->GetFloatArrayElements(
+            mixL,
+            &copies[0]
+        );
+
+    float* b =
+        env->GetFloatArrayElements(
+            mixR,
+            &copies[1]
+        );
+
+    float* c =
+        env->GetFloatArrayElements(
+            vocalL,
+            &copies[2]
+        );
+
+    float* d =
+        env->GetFloatArrayElements(
+            vocalR,
+            &copies[3]
+        );
+
+    float* oL =
+        env->GetFloatArrayElements(
+            outL,
+            &copies[4]
+        );
+
+    float* oR =
+        env->GetFloatArrayElements(
+            outR,
+            &copies[5]
+        );
+
+    if (!a || !b || !c || !d || !oL || !oR) {
+
+        if (a)
+            env->ReleaseFloatArrayElements(
+                mixL,
+                a,
+                JNI_ABORT
+            );
+
+        if (b)
+            env->ReleaseFloatArrayElements(
+                mixR,
+                b,
+                JNI_ABORT
+            );
+
+        if (c)
+            env->ReleaseFloatArrayElements(
+                vocalL,
+                c,
+                JNI_ABORT
+            );
+
+        if (d)
+            env->ReleaseFloatArrayElements(
+                vocalR,
+                d,
+                JNI_ABORT
+            );
+
+        if (oL)
+            env->ReleaseFloatArrayElements(
+                outL,
+                oL,
+                0
+            );
+
+        if (oR)
+            env->ReleaseFloatArrayElements(
+                outR,
+                oR,
+                0
+            );
+
+        throwIllegalState(
+            env,
+            "Could not access audio arrays"
+        );
+
+        return;
+    }
+
+    engine->dsp.processBlock(
+        a,
+        b,
+        c,
+        d,
+        oL,
+        oR,
+        static_cast<std::size_t>(n)
+    );
+
+    env->ReleaseFloatArrayElements(
+        mixL,
+        a,
+        JNI_ABORT
+    );
+
+    env->ReleaseFloatArrayElements(
+        mixR,
+        b,
+        JNI_ABORT
+    );
+
+    env->ReleaseFloatArrayElements(
+        vocalL,
+        c,
+        JNI_ABORT
+    );
+
+    env->ReleaseFloatArrayElements(
+        vocalR,
+        d,
+        JNI_ABORT
+    );
+
+    env->ReleaseFloatArrayElements(
+        outL,
+        oL,
+        0
+    );
+
+    env->ReleaseFloatArrayElements(
+        outR,
+        oR,
+        0
+    );
 }
