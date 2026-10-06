@@ -1,5 +1,6 @@
 package com.example.musicplayer
-
+import com.example.musicplayer.vocalremoverui.VocalRemoverActivity
+import com.example.musicplayer.vocalremoverui.VocalRemoverLaunchCard
 import android.Manifest
 import android.content.ComponentName
 import android.content.Context
@@ -995,7 +996,7 @@ class MainActivity : AppCompatActivity() {
     startActivity(
         Intent(
             this,
-            vocalremoverui.VocalRemoverActivity::class.java
+            VocalRemoverActivity::class.java
         )
     )
 }
