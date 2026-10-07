@@ -1,5 +1,6 @@
 package com.example.musicplayer.vocalremoverui
 
+import android.content.Context
 import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
@@ -32,6 +33,8 @@ import java.util.concurrent.Future
 class VocalRemoverUi(
     private val host: Host,
 ) {
+
+    private lateinit var uiContext: Context
 
     interface Host {
         fun currentTrack(): TrackSource?
@@ -96,6 +99,11 @@ class VocalRemoverUi(
     private var ceilingDb = -1f
 
     fun build(parent: ViewGroup): View {
+        // Capture the host view context before any helper can run. The UI is
+        // constructed top-to-bottom, so no lateinit View should be the source
+        // of Context during this phase.
+        uiContext = parent.context
+
         val root = LinearLayout(parent.context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
@@ -772,7 +780,7 @@ progress =
      * status are created, so dp() must not depend on any view property.
      */
     private fun dp(v: Int): Int =
-        (v * android.content.res.Resources.getSystem().displayMetrics.density).toInt()
+        (v * uiContext.resources.displayMetrics.density).toInt()
 
     private fun marginTop(v: Int): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(
