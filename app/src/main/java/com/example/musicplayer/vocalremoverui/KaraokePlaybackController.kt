@@ -1,3 +1,10 @@
+private data class RenderBlock(
+    val generation: Long,
+    val audio: VocalSeparatorCore.Stereo,
+) {
+    val size: Int get() = audio.size
+}
+
 package com.example.musicplayer.vocalremoverui
 
 import android.media.AudioAttributes
@@ -45,11 +52,6 @@ class KaraokePlaybackController(
         val ceilingDb: Float = -1f,
     )
 
-    private data class Block(
-        val generation: Long,
-        val audio: VocalSeparatorCore.Stereo,
-    )
-
     private val processExecutor: ExecutorService = Executors.newSingleThreadExecutor {
         Thread(it, "Audiophile-Karaoke-Process").apply { isDaemon = true }
     }
@@ -79,20 +81,6 @@ class KaraokePlaybackController(
         audioExecutor.execute { audioLoop() }
     }
 
-    fun start(newConfig: Config) {
-        stopCurrent(false)
-        closed = false
-        paused = false
-        autoplay = true
-        primed = false
-        config = newConfig
-        startPositionMs = 0L
-        durationMs = 0L
-        nextGeneration(0L)
-        publish(State.PREPARING, "Preparing MDX-Net karaoke…")
-        launchProcessing(0L)
-    }
-
     fun pause() {
         if (closed) return
         paused = true
@@ -109,24 +97,6 @@ class KaraokePlaybackController(
             if (primed) track?.play()
         }
         publish(if (primed) State.PLAYING else State.BUFFERING, "Resuming karaoke…")
-    }
-
-    fun seekTo(positionMs: Long) {
-        if (closed) return
-        val target = positionMs.coerceIn(0L, durationMs)
-        val keepPlaying = !paused
-        autoplay = keepPlaying
-        paused = !keepPlaying
-        nextGeneration(target)
-
-        synchronized(audioLock) {
-            track?.pause()
-            track?.flush()
-            writtenFrames = 0L
-        }
-
-        publish(State.PREPARING, "Rebuilding the separation window…")
-        launchProcessing(target)
     }
 
     fun stop() {
@@ -169,69 +139,6 @@ class KaraokePlaybackController(
         primed = false
         writtenFrames = 0L
         startPositionMs = positionMs
-    }
-
-    private fun launchProcessing(positionMs: Long) {
-        val localGeneration = generation
-        processFuture = processExecutor.submit {
-            runProcessing(localGeneration, positionMs)
-        }
-    }
-
-    private fun runProcessing(localGeneration: Long, positionMs: Long) {
-        val cfg = config ?: return
-        var extractor: MediaExtractor? = null
-        var streaming: com.bmwanje.audiophile.vocalremover.StreamingVocalRemover? = null
-
-        try {
-            extractor = MediaExtractor()
-            extractor.setDataSource(
-                cfg.uri.let { it },
-                null,
-            )
-
-            var audioFormat: MediaFormat? = null
-            for (i in 0 until extractor.trackCount) {
-                val candidate = extractor.getTrackFormat(i)
-                val mime = candidate.getString(MediaFormat.KEY_MIME) ?: continue
-                if (mime.startsWith("audio/")) {
-                    extractor.selectTrack(i)
-                    audioFormat = candidate
-                    break
-                }
-            }
-
-            val format = audioFormat ?: error("No audio track found")
-            val rate = format.getIntegerSafe(MediaFormat.KEY_SAMPLE_RATE)
-                ?: error("Audio sample rate is missing")
-            val durationUs = format.getLongSafe(MediaFormat.KEY_DURATION) ?: 0L
-            durationMs = (durationUs / 1000L).coerceAtLeast(0L)
-
-            setupTrack(rate)
-
-            val p = VocalRemoverPipeline(
-                serviceContext = null,
-                sampleRate = rate,
-            )
-
-            p.setDepth(cfg.depth)
-            p.setFocus(cfg.focus)
-            p.setTransientProtection(cfg.transientProtection)
-            p.setDryWet(cfg.dryWet)
-            p.setStemGainDb(cfg.stemGainDb)
-            p.setOutputGainDb(cfg.outputGainDb)
-            p.setCeilingDb(cfg.ceilingDb)
-
-            pipeline?.close()
-            pipeline = p
-            throw IllegalStateException("Karaoke controller requires application context constructor")
-        } catch (t: Throwable) {
-            if (!isCurrent(localGeneration)) return
-            publish(State.ERROR, "Karaoke failed: " + (t.message ?: "unknown error"))
-        } finally {
-            runCatching { streaming?.close() }
-            runCatching { extractor?.release() }
-        }
     }
 
     private fun setupTrack(rate: Int) {
@@ -613,7 +520,7 @@ class KaraokePlaybackController(
 
             streaming = p.startStreaming { block ->
                 if (!isCurrent(localGeneration)) return@startStreaming
-                queue.put(Block(localGeneration, block))
+                queue.put(RenderBlock(localGeneration, block))
             }
 
             if (positionMs > 0L) {
@@ -676,18 +583,11 @@ private class BlockQueue(
     maxMs: Long,
 ) {
     private val lock = Object()
-    private val blocks = ArrayDeque<AnyBlock>()
+    private val blocks = ArrayDeque<RenderBlock>()
     private val maxFrames = (48_000L * maxMs / 1000L).toInt()
     private var frames = 0
     private var finished = false
     private var cancelled = false
-
-    private data class AnyBlock(
-        val generation: Long,
-        val audio: VocalSeparatorCore.Stereo,
-    ) {
-        val size get() = audio.size
-    }
 
     fun reset() = synchronized(lock) {
         blocks.clear()
@@ -705,7 +605,7 @@ private class BlockQueue(
         lock.notifyAll()
     }
 
-    fun put(block: AnyBlock) = synchronized(lock) {
+    fun put(block: RenderBlock) = synchronized(lock) {
         while (!cancelled && frames + block.size > maxFrames) {
             if (Thread.currentThread().isInterrupted) throw InterruptedException()
             lock.wait(50L)
@@ -716,9 +616,7 @@ private class BlockQueue(
         lock.notifyAll()
     }
 
-    fun put(block: Block) = put(AnyBlock(block.generation, block.audio))
-
-    fun take(): AnyBlock? = synchronized(lock) {
+    fun take(): RenderBlock? = synchronized(lock) {
         while (blocks.isEmpty() && !finished && !cancelled) {
             if (Thread.currentThread().isInterrupted) throw InterruptedException()
             lock.wait(50L)
