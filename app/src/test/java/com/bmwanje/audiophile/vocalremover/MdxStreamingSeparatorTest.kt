@@ -4,7 +4,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
-import kotlin.math.ceil
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -83,13 +82,11 @@ class MdxStreamingSeparatorTest {
             assertTrue(maxError(input, output) < 2.0e-6f)
 
             val expectedCalls =
-                maxOf(
-                    1,
-                    ceil(
-                        length.toDouble() /
-                            stride.toDouble()
-                    ).toInt(),
-                )
+                if (length < chunkSize) {
+                    1
+                } else {
+                    ((length - chunkSize) / stride) + 2
+                }
             assertEquals(
                 "unexpected model-call count for length " + length,
                 expectedCalls,
