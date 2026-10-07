@@ -414,17 +414,6 @@ class KaraokePlaybackController(
     private fun currentState(): State =
         if (paused) State.PAUSED else State.PLAYING
 
-    private fun publish(state: State, message: String?) {
-        onSnapshot(
-            Snapshot(
-                state = state,
-                positionMs = positionMs(),
-                durationMs = durationMs,
-                bufferAheadMs = bufferAheadMs(),
-                message = message ?: "",
-            )
-        )
-    }
 
     private fun positionMs(): Long {
         val rate = sampleRate.takeIf { it > 0 } ?: return startPositionMs
