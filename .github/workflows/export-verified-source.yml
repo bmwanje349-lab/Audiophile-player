@@ -1,0 +1,36 @@
+name: Export verified source ZIP
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create source ZIP
+        run: |
+          set -euo pipefail
+          git archive --format=zip --output=Audiophile-player-live-karaoke-source.zip HEAD
+          unzip -t Audiophile-player-live-karaoke-source.zip
+          sha256sum Audiophile-player-live-karaoke-source.zip | tee source-zip.sha256
+          unzip -l Audiophile-player-live-karaoke-source.zip | head -80
+
+      - name: Upload verified source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Audiophile-player-live-karaoke-source-verified
+          path: |
+            Audiophile-player-live-karaoke-source.zip
+            source-zip.sha256
+          if-no-files-found: error
+          retention-days: 30
