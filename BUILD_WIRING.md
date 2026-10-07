@@ -1,73 +1,83 @@
-# MDX-LiteRT integration wiring
+# MDX-Net ONNX Runtime integration wiring
 
 ## Runtime
 
-Use the MDX-LiteRT backend as the neural layer. The default model is `UVR_MDXNET_9482.fp16acc.tflite` (~30 MB). `UVR-MDX-NET-Voc_FT.fp16acc.tflite` (~67 MB) is available as the higher-quality option.
-
-The app should use:
+The production neural layer is:
 
 - `MdxModelSpec`
 - `MdxModelManager`
 - `MdxStft`
-- `MdxLiteRtVocalModelRunner`
+- `MdxOnnxVocalModelRunner`
 - `MdxSeparatorCore`
-- existing `VocalRemoverPipeline`
+- `VocalRemoverPipeline`
 
 ## Gradle
 
 ```kotlin
-implementation("com.google.ai.edge.litert:litert:2.2.0")
+implementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
 implementation("com.github.wendykierp:JTransforms:3.1")
 ```
 
-LiteRT 2.x's current Android API is `CompiledModel`. It can target GPU and fall back to CPU; the supplied runner tries GPU+CPU first and then CPU-only.
+There is no LiteRT/TFLite dependency.
 
-## Project compatibility
+## Model packaging
 
-LiteRT 2.2.0 is a modern dependency. Projects using an older Kotlin/AGP toolchain may need the Kotlin/AGP update required by LiteRT 2.x before the source compiles. Do not lower the model's STFT contract to work around a dependency mismatch.
-
-## Model installation
-
-The model is **not** embedded in the APK. `MdxModelManager` downloads it into app-private storage, resumes interrupted transfers, verifies SHA-256, then atomically renames the `.part` file.
-
-Pinned models:
+The exact verified model is:
 
 | Profile | File | SHA-256 | Approx. size |
 |---|---|---|---:|
-| `LIGHT_9482` | `UVR_MDXNET_9482.fp16acc.tflite` | `2a07e11db13a11ca4900a54b4a316ef67931e993a6a3d19444bccbbeb9b445ee` | 29.8 MB |
-| `VOC_FT` | `UVR-MDX-NET-Voc_FT.fp16acc.tflite` | `5ef47e3b3bafa14357532c0a3f6c5f18444d94b6efe3fd62b3d13f80051f1e58` | 66.8 MB |
+| `LIGHT_9482` | `UVR_MDXNET_9482.onnx` | `f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184` | ~30 MB |
+
+CI downloads and verifies the model into:
+
+```
+app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx
+```
+
+The app then copies that asset to app-private storage and verifies the same checksum before loading it.
+
+## Tensor contract
+
+```
+[1, 4, 2048, 256] float32
+```
+
+The host-side STFT stores the four planes as left-real, left-imaginary, right-real, right-imaginary.
 
 ## Processing path
 
-```text
+```
 Decoded stereo PCM
       |
       v
-44.1 kHz resample
+44.1 kHz model-rate conversion
       |
       v
 Periodic-Hann STFT
       |
       v
-MDX-Net LiteRT [1,4,dim_f,256]
+ONNX Runtime [1,4,2048,256]
       |
       v
-inverse STFT -> vocal stem
+inverse STFT
       |
       v
-sample-rate restore
+overlap/crossfade reconstruction
       |
       v
-Existing PremiumVocalRemoverDSP  <--- unchanged
+source-rate restoration
       |
       v
-latency-aligned instrumental copy
+Existing PremiumVocalRemoverDSP
+      |
+      v
+latency-aligned instrumental output
 ```
 
-The MDX model predicts the vocal stem. The original mix is still passed to the existing native DSP; the source file is never overwritten.
+## Failure handling
+
+Model installation is checksum-gated. Session construction is metadata-gated. A bad download, corrupted asset or wrong model shape cannot silently become the active runner.
 
 ## UI
 
-Keep the AI Vocal Remover as a separate DSP screen/card after the existing Stereo Widener. Do not place MDX inside the normal live EQ/widener render chain.
-
-The supplied UI copy now says `MDX-Net vocal separation` rather than `HT-Demucs`.
+The AI Vocal Remover remains a separate offline-processing feature. It does not replace the regular EQ or stereo-widener render chain.
