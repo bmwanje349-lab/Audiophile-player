@@ -1,15 +1,7 @@
-// MDX-LiteRT dependencies for the Android app module.
-// LiteRT 2.x provides the modern CompiledModel API with GPU/CPU fallback.
-implementation("com.google.ai.edge.litert:litert:2.2.0")
+// ONNX Runtime is the canonical neural backend for this app.
+implementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
 implementation("com.github.wendykierp:JTransforms:3.1")
 
-// Keep your existing native DSP target alongside the player's existing EQ and
-// stereo-widener targets. Do NOT replace libpeq/libwidener.
-externalNativeBuild {
-    cmake {
-        path = file("src/main/cpp/CMakeLists.txt")
-    }
-}
-
-// AndroidManifest.xml:
-// <uses-permission android:name="android.permission.INTERNET" />
+// Keep the existing native EQ, premium vocal-removal and stereo-widener
+// libraries unchanged. The MDX model is fetched/verified by CI and bundled
+// into app/src/main/assets/models/mdx/ for production APKs.

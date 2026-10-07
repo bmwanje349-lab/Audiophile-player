@@ -1,23 +1,11 @@
 package com.bmwanje.audiophile.vocalremover
 
 import org.jtransforms.fft.FloatFFT_1D
+import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.PI
 
-/**
- * Host-side STFT/iSTFT for the UVR MDX-Net LiteRT models.
- *
- * Contract:
- *   input  = stereo PCM, 44.1 kHz
- *   output = [1,4,dimF,256] flattened as [L_re,L_im,R_re,R_im]
- *
- * The model graph itself contains no STFT/iSTFT. We therefore mirror the
- * published MDX framing: periodic Hann, center reflection, hop=1024, Nyquist
- * bin dropped, and inverse overlap-add normalized by the squared-window
- * envelope.
- */
+/** Host-side STFT/iSTFT for the UVR MDX-Net ONNX model. */
 class MdxStft(private val spec: MdxModelSpec) {
     companion object {
         const val SAMPLE_RATE = 44_100
@@ -35,22 +23,15 @@ class MdxStft(private val spec: MdxModelSpec) {
     private val window = FloatArray(n) { i ->
         (0.5 - 0.5 * cos(2.0 * PI * i.toDouble() / n.toDouble())).toFloat()
     }
-    private val windowSq = FloatArray(n) { i ->
-        val w = window[i]
-        w * w
-    }
+    private val windowSq = FloatArray(n) { i -> window[i] * window[i] }
     private val fft = FloatFFT_1D(n.toLong())
 
     data class Spectrogram(val data: FloatArray) {
-        init {
-            require(data.isNotEmpty())
-        }
+        init { require(data.isNotEmpty()) }
     }
 
     data class StereoChunk(val left: FloatArray, val right: FloatArray) {
-        init {
-            require(left.size == right.size)
-        }
+        init { require(left.size == right.size) }
         val size: Int get() = left.size
     }
 
@@ -59,50 +40,33 @@ class MdxStft(private val spec: MdxModelSpec) {
     fun tensorSize(): Int = tensorSize
 
     fun forward(left: FloatArray, right: FloatArray): Spectrogram {
-        require(left.size == chunkSize && right.size == chunkSize) {
-            "Expected $chunkSize samples per channel"
-        }
+        require(left.size == chunkSize && right.size == chunkSize)
         val out = FloatArray(tensorSize)
-        writeChannel(left, out, planeBase = 0)
-        writeChannel(right, out, planeBase = 2)
+        writeChannel(left, out, 0)
+        writeChannel(right, out, 2)
         return Spectrogram(out)
     }
 
-    /**
-     * The FloatFFT real-full format stores complex bins interleaved. The helper
-     * below fills two planes per channel from the same FFT pass.
-     */
-    private fun writeChannel(
-        input: FloatArray,
-        out: FloatArray,
-        planeBase: Int,
-    ) {
+    private fun writeChannel(input: FloatArray, out: FloatArray, planeBase: Int) {
         val padded = reflectPad(input)
         val frame = FloatArray(2 * n)
         for (t in 0 until dimT) {
             val start = t * hop
-            for (i in 0 until n) {
-                frame[i] = padded[start + i] * window[i]
-            }
+            for (i in 0 until n) frame[i] = padded[start + i] * window[i]
             for (i in n until 2 * n) frame[i] = 0f
             fft.realForwardFull(frame)
-            val frameOffset = t
             val realBase = planeBase * dimF * dimT
             val imagBase = (planeBase + 1) * dimF * dimT
             for (k in 0 until dimF) {
-                out[realBase + k * dimT + frameOffset] = finite(frame[2 * k])
-                out[imagBase + k * dimT + frameOffset] = finite(frame[2 * k + 1])
+                out[realBase + k * dimT + t] = finite(frame[2 * k])
+                out[imagBase + k * dimT + t] = finite(frame[2 * k + 1])
             }
         }
     }
 
     fun inverse(spectrogram: Spectrogram): Pair<FloatArray, FloatArray> {
-        require(spectrogram.data.size == tensorSize) {
-            "Expected tensor size $tensorSize, got ${spectrogram.data.size}"
-        }
-        val left = inverseChannel(spectrogram.data, 0)
-        val right = inverseChannel(spectrogram.data, 2)
-        return left to right
+        require(spectrogram.data.size == tensorSize)
+        return inverseChannel(spectrogram.data, 0) to inverseChannel(spectrogram.data, 2)
     }
 
     private fun inverseChannel(specData: FloatArray, planeBase: Int): FloatArray {
@@ -119,8 +83,6 @@ class MdxStft(private val spec: MdxModelSpec) {
                 frame[2 * k] = specData[realBase + k * dimT + t]
                 frame[2 * k + 1] = specData[imagBase + k * dimT + t]
             }
-            // dimF = n/2 means the Nyquist bin is intentionally omitted and
-            // therefore stays zero. Restore Hermitian symmetry.
             for (k in 1 until dimF) {
                 val dst = n - k
                 frame[2 * dst] = frame[2 * k]
@@ -131,7 +93,7 @@ class MdxStft(private val spec: MdxModelSpec) {
             for (i in 0 until n) {
                 val x = frame[i] * window[i]
                 accum[start + i] += x
-                envelope[start + i] += windowSq[i]
+                envelope[start + i] += window[i] * window[i]
             }
         }
 

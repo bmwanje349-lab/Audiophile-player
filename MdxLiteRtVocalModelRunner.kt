@@ -1,66 +1,95 @@
 package com.bmwanje.audiophile.vocalremover
 
-import com.google.ai.edge.litert.Accelerator
-import com.google.ai.edge.litert.CompiledModel
-import com.google.ai.edge.litert.TensorBuffer
+import ai.onnxruntime.OnnxJavaType
+import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
+import ai.onnxruntime.TensorInfo
+import java.nio.FloatBuffer
 
 /**
- * LiteRT runner for a UVR MDX-Net vocal model.
+ * ONNX Runtime runner for the verified UVR MDX-Net 9482 model.
  *
- * The model predicts the vocal spectrogram. The output is converted back to a
- * vocal PCM stem by MdxStft.inverse(). Hardware selection is GPU+CPU first,
- * with CPU fallback so unsupported devices still work.
+ * The legacy filename remains for source compatibility, but there is no
+ * LiteRT dependency or execution path in this implementation.
  */
-class MdxLiteRtVocalModelRunner(
+class MdxOnnxVocalModelRunner(
     modelPath: String,
     private val modelSpec: MdxModelSpec,
     cpuThreads: Int = 4,
 ) : AutoCloseable, MdxSeparatorCore.Runner {
 
     private val stft = MdxStft(modelSpec)
-    private val model: CompiledModel
-    private lateinit var inputBuffers: List<TensorBuffer>
-    private lateinit var outputBuffers: List<TensorBuffer>
+    private val environment = OrtEnvironment.getEnvironment()
+    private val session: OrtSession
+    private val inputName: String
+    private val outputName: String
 
     init {
-        model = createModel(modelPath, cpuThreads)
-        inputBuffers = model.createInputBuffers()
-        outputBuffers = model.createOutputBuffers()
-        require(inputBuffers.size == 1) { "MDX model must expose one input tensor" }
-        require(outputBuffers.size == 1) { "MDX model must expose one output tensor" }
+        val options = OrtSession.SessionOptions().apply {
+            setIntraOpNumThreads(cpuThreads.coerceAtLeast(1))
+            setInterOpNumThreads(1)
+        }
+        session = environment.createSession(modelPath, options)
+        inputName = session.inputNames.singleOrNull()
+            ?: error("9482 ONNX model must expose exactly one input")
+        outputName = session.outputNames.singleOrNull()
+            ?: error("9482 ONNX model must expose exactly one output")
+        validateTensor("input", session.inputInfo[inputName]?.info)
+        validateTensor("output", session.outputInfo[outputName]?.info)
     }
 
     @Synchronized
-    override fun separateChunk(left: FloatArray, right: FloatArray): MdxStft.StereoChunk {
+    override fun separateChunk(
+        left: FloatArray,
+        right: FloatArray,
+    ): MdxStft.StereoChunk {
         val input = stft.forward(left, right)
-        inputBuffers[0].writeFloat(input.data)
-        model.run(inputBuffers, outputBuffers)
-        val output = outputBuffers[0].readFloat()
-        require(output.size == stft.tensorSize()) {
-            "Unexpected MDX output size: ${output.size} != ${stft.tensorSize()}"
+        val shape = longArrayOf(1L, 4L, modelSpec.dimF.toLong(), modelSpec.dimT.toLong())
+
+        OnnxTensor.createTensor(environment, FloatBuffer.wrap(input.data), shape).use { tensor ->
+            session.run(mapOf(inputName to tensor)).use { result ->
+                val value = result[outputName].orElseThrow {
+                    IllegalStateException("9482 ONNX output '$outputName' is missing")
+                }
+                val outputTensor = value as? OnnxTensor
+                    ?: error("9482 ONNX output is not a tensor")
+                val outputBuffer = outputTensor.getFloatBuffer()
+                    ?: error("9482 ONNX output is not float-compatible")
+                val output = FloatArray(outputBuffer.remaining()).also { outputBuffer.get(it) }
+
+                require(output.size == stft.tensorSize()) {
+                    "Unexpected MDX output size: " + output.size +
+                        " != " + stft.tensorSize()
+                }
+
+                val (vocL, vocR) = stft.inverse(MdxStft.Spectrogram(output))
+                return MdxStft.StereoChunk(vocL, vocR)
+            }
         }
-        val vocalSpec = MdxStft.Spectrogram(output)
-        val (vocL, vocR) = stft.inverse(vocalSpec)
-        return MdxStft.StereoChunk(vocL, vocR)
     }
 
-    private fun createModel(path: String, cpuThreads: Int): CompiledModel {
-        val gpuThenCpu = CompiledModel.Options(Accelerator.GPU, Accelerator.CPU).apply {
-            cpuOptions = CompiledModel.CpuOptions(numThreads = cpuThreads.coerceAtLeast(1))
+    private fun validateTensor(role: String, info: ai.onnxruntime.ValueInfo?) {
+        val tensorInfo = info as? TensorInfo
+            ?: error("9482 ONNX " + role + " is not a tensor")
+        val expectedShape = longArrayOf(1L, 4L, modelSpec.dimF.toLong(), modelSpec.dimT.toLong())
+        val actualShape = tensorInfo.getShape()
+        require(
+            actualShape.size == expectedShape.size &&
+                (actualShape[0] == -1L || actualShape[0] == 1L) &&
+                actualShape.copyOfRange(1, actualShape.size)
+                    .contentEquals(expectedShape.copyOfRange(1, expectedShape.size))
+        ) {
+            "Unexpected 9482 ONNX " + role + " shape: " +
+                actualShape.contentToString() +
+                " expected [batch,4,2048,256]"
         }
-        try {
-            return CompiledModel.create(path, gpuThenCpu, null)
-        } catch (_: Throwable) {
-            val cpuOnly = CompiledModel.Options(Accelerator.CPU).apply {
-                cpuOptions = CompiledModel.CpuOptions(numThreads = cpuThreads.coerceAtLeast(1))
-            }
-            return CompiledModel.create(path, cpuOnly, null)
+        require(tensorInfo.type == OnnxJavaType.FLOAT) {
+            "9482 ONNX " + role + " must be float32, got " + tensorInfo.type
         }
     }
 
     override fun close() {
-        inputBuffers.forEach { it.close() }
-        outputBuffers.forEach { it.close() }
-        model.close()
+        session.close()
     }
 }

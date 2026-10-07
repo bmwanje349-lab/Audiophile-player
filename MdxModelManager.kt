@@ -8,18 +8,22 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.security.MessageDigest
 
-/** On-demand MDX model download with atomic install + SHA-256 verification. */
+/** Installs the pinned ONNX model from the APK asset or verified network fallback. */
 object MdxModelManager {
     private const val MODELS_DIR = "models/mdx"
-    private const val ASSET_ROOT = "models/mdx"
 
     fun file(context: Context, spec: MdxModelSpec): File =
-        File(File(context.filesDir, MODELS_DIR), spec.fileName)
+        File(File(context.applicationContext.filesDir, MODELS_DIR), spec.fileName)
 
     fun isInstalled(context: Context, spec: MdxModelSpec): Boolean {
         val f = file(context, spec)
         return f.isFile && sha256(f) == spec.sha256
     }
+
+    fun hasBundledModel(context: Context, spec: MdxModelSpec): Boolean =
+        runCatching {
+            context.applicationContext.assets.open(spec.assetPath).use { true }
+        }.getOrDefault(false)
 
     @Synchronized
     fun ensureInstalled(
@@ -27,27 +31,81 @@ object MdxModelManager {
         spec: MdxModelSpec = MdxModelSpec.LIGHT_9482,
         progress: ((done: Long, total: Long) -> Unit)? = null,
     ): File {
-        val target = file(context, spec)
-        if (isInstalled(context, spec)) return target
-
-        // Prefer a verified model packaged into the APK. This avoids runtime
-        // dependence on Hugging Face/Xet redirects and makes the vocal remover
-        // usable offline after installation.
-        if (installPackagedAssetIfPresent(context, spec, target)) return target
+        val appContext = context.applicationContext
+        val target = file(appContext, spec)
+        if (isInstalled(appContext, spec)) return target
 
         target.parentFile?.mkdirs()
+        if (installBundledAsset(appContext, spec, target, progress)) return target
+        return downloadAndInstall(appContext, spec, target, progress)
+    }
+
+    private fun installBundledAsset(
+        context: Context,
+        spec: MdxModelSpec,
+        target: File,
+        progress: ((done: Long, total: Long) -> Unit)?,
+    ): Boolean {
+        val temp = File(target.parentFile, "${spec.fileName}.asset.part")
+        return try {
+            context.assets.open(spec.assetPath).use { input ->
+                val total = input.available().toLong().takeIf { it > 0L } ?: -1L
+                FileOutputStream(temp, false).use { output ->
+                    val buffer = ByteArray(1024 * 1024)
+                    var done = 0L
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        if (n == 0) continue
+                        output.write(buffer, 0, n)
+                        done += n
+                        progress?.invoke(done, total)
+                    }
+                    output.fd.sync()
+                }
+            }
+            require(temp.isFile && temp.length() > 1_000_000L) {
+                "Bundled MDX model is unexpectedly small"
+            }
+            require(sha256(temp) == spec.sha256) {
+                "Bundled MDX model SHA-256 mismatch for ${spec.id}"
+            }
+            if (!temp.renameTo(target)) {
+                if (target.exists() && !target.delete()) {
+                    error("Cannot replace existing MDX model")
+                }
+                require(temp.renameTo(target)) { "Cannot finalize bundled MDX model" }
+            }
+            true
+        } catch (_: java.io.FileNotFoundException) {
+            temp.delete()
+            false
+        } catch (_: java.io.IOException) {
+            temp.delete()
+            false
+        } catch (_: IllegalArgumentException) {
+            temp.delete()
+            throw IllegalStateException("Bundled MDX model is corrupt")
+        }
+    }
+
+    private fun downloadAndInstall(
+        context: Context,
+        spec: MdxModelSpec,
+        target: File,
+        progress: ((done: Long, total: Long) -> Unit)?,
+    ): File {
         val temp = File(target.parentFile, "${spec.fileName}.part")
         var existing = if (temp.isFile) temp.length() else 0L
         var append = existing > 0L
         var connection: HttpURLConnection? = null
-
         try {
             fun openConnection(rangeStart: Long): HttpURLConnection =
                 (URI(spec.modelUrl).toURL().openConnection() as HttpURLConnection).apply {
                     connectTimeout = 30_000
                     readTimeout = 120_000
                     instanceFollowRedirects = true
-                    setRequestProperty("User-Agent", "AudiophilePlayer/MDX-1")
+                    setRequestProperty("User-Agent", "AudiophilePlayer/MDX-ONNX-1")
                     if (rangeStart > 0L) setRequestProperty("Range", "bytes=$rangeStart-")
                 }
 
@@ -111,42 +169,6 @@ object MdxModelManager {
         }
     }
 
-    private fun installPackagedAssetIfPresent(
-        context: Context,
-        spec: MdxModelSpec,
-        target: File,
-    ): Boolean {
-        return try {
-            context.assets.open(ASSET_ROOT + "/" + spec.fileName).use { input ->
-                target.parentFile?.mkdirs()
-                val temp = File(target.parentFile, spec.fileName + ".asset.part")
-                FileOutputStream(temp, false).use { output ->
-                    val buffer = ByteArray(1024 * 1024)
-                    while (true) {
-                        val n = input.read(buffer)
-                        if (n < 0) break
-                        if (n > 0) output.write(buffer, 0, n)
-                    }
-                    output.fd.sync()
-                }
-                require(temp.length() > 1_000_000L) {
-                    "Packaged MDX model is unexpectedly small"
-                }
-                require(sha256(temp) == spec.sha256) {
-                    "Packaged MDX model SHA-256 mismatch for " + spec.id
-                }
-                if (target.exists() && !target.delete()) {
-                    error("Cannot replace old MDX model")
-                }
-                require(temp.renameTo(target)) {
-                    "Cannot finalize packaged MDX model"
-                }
-                true
-            }
-        } catch (_: java.io.FileNotFoundException) {
-            false
-        }
-    }
     fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         FileInputStream(file).use { input ->
@@ -161,7 +183,6 @@ object MdxModelManager {
     }
 }
 
-/** Backward-compatible facade for the existing UI patch. */
 object ModelManager {
     fun isInstalled(context: Context): Boolean =
         MdxModelManager.isInstalled(context, MdxModelSpec.LIGHT_9482)

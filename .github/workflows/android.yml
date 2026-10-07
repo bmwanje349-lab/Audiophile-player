@@ -28,11 +28,31 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
-          sdkmanager \
-            "platforms;android-36" \
-            "build-tools;35.0.0" \
-            "cmake;3.22.1" \
-            "ndk;27.3.13750724"
+          sdkmanager             "platforms;android-36"             "build-tools;35.0.0"             "cmake;3.22.1"             "ndk;27.3.13750724"
+
+      - name: Fetch and verify exact MDX ONNX model
+        run: |
+          set -euo pipefail
+          MODEL_DIR="app/src/main/assets/models/mdx"
+          MODEL_FILE="UVR_MDXNET_9482.onnx"
+          MODEL_URL="https://huggingface.co/seanghay/uvr_models/resolve/main/UVR_MDXNET_9482.onnx?download=true"
+          MODEL_SHA256="f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184"
+
+          mkdir -p "$MODEL_DIR"
+          curl --fail --location --retry 5 --retry-delay 3             -A "AudiophilePlayer/MDX-ONNX-build"             -o "$MODEL_DIR/$MODEL_FILE.part"             "$MODEL_URL"
+
+          echo "$MODEL_SHA256  $MODEL_DIR/$MODEL_FILE.part" | sha256sum -c -
+          test "$(stat -c%s "$MODEL_DIR/$MODEL_FILE.part")" -gt 1000000
+          mv "$MODEL_DIR/$MODEL_FILE.part" "$MODEL_DIR/$MODEL_FILE"
+
+          echo "Verified model:"
+          sha256sum "$MODEL_DIR/$MODEL_FILE"
+          ls -lh "$MODEL_DIR/$MODEL_FILE"
+
+      - name: Real ONNX model contract smoke test
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-cache-dir onnxruntime numpy
+          MDX_MODEL="$PWD/app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx"             python3 mdx_model_smoke.py
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -43,46 +63,31 @@ jobs:
         run: |
           pwd
           ls -la
-
           echo "--- app folder ---"
           ls -la app || echo "NO app FOLDER"
-
-          echo "--- app/build.gradle.kts (first 12 lines) ---"
-          head -12 app/build.gradle.kts || echo "NO app/build.gradle.kts"
-
+          echo "--- model asset ---"
+          ls -lh app/src/main/assets/models/mdx || echo "NO MDX MODEL ASSET"
+          echo "--- app/build.gradle.kts (first 16 lines) ---"
+          head -16 app/build.gradle.kts || echo "NO app/build.gradle.kts"
           echo "--- settings ---"
           cat settings.gradle.kts
-
           echo "--- all build files ---"
           find . -name "build.gradle*" -not -path "./.git/*"
-
           echo "--- gradle projects ---"
           gradle projects --console=plain --no-daemon
-
           echo "--- app tasks ---"
           gradle :app:tasks --all --console=plain --no-daemon
 
       - name: Build Debug APK
         run: |
+          set -euo pipefail
           set +e
-
-          gradle :app:assembleDebug \
-            --console=plain \
-            --stacktrace \
-            --no-daemon \
-            2>&1 | tee build.log
-
-          status=${PIPESTATUS[0]}
-
+          gradle :app:assembleDebug             --console=plain             --stacktrace             --no-daemon             > build.log 2>&1
+          status=$?
+          cat build.log
           echo "=================== ERROR SUMMARY ==================="
-
-          grep -n -E \
-            "^e: |What went wrong|error:|CMake Error|Execution failed|> .*(not found|Unresolved|Could not)" \
-            -A4 \
-            build.log | head -80
-
+          grep -n -E             "^e: |What went wrong|error:|CMake Error|Execution failed|> .*(not found|Unresolved|Could not)"             -A4             build.log | head -80 || true
           echo "======================================================"
-
           exit "$status"
 
       - name: Upload Debug APK

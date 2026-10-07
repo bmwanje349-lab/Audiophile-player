@@ -1,12 +1,9 @@
-
 package com.bmwanje.audiophile.vocalremover
 
 import android.content.Context
 
 /**
- * End-to-end: input PCM -> MDX vocal stem -> corrected premium vocal-removal
- * DSP -> latency-aligned output. The existing premium DSP is intentionally
- * isolated and unchanged.
+ * End-to-end: input PCM -> ONNX MDX vocal stem -> existing premium DSP.
  */
 class VocalRemoverPipeline(
     context: Context,
@@ -16,13 +13,13 @@ class VocalRemoverPipeline(
     private val appContext = context.applicationContext
     private val sampleRate = sampleRate
     private val native = NativeVocalRemover(sampleRate)
-    private var runner: MdxLiteRtVocalModelRunner? = null
+    private var runner: MdxOnnxVocalModelRunner? = null
 
     fun loadModel(
         progress: ((done: Long, total: Long) -> Unit)? = null,
     ) {
         val file = MdxModelManager.ensureInstalled(appContext, modelSpec, progress)
-        val replacement = MdxLiteRtVocalModelRunner(file.absolutePath, modelSpec)
+        val replacement = MdxOnnxVocalModelRunner(file.absolutePath, modelSpec)
         val previous = runner
         runner = replacement
         previous?.close()
