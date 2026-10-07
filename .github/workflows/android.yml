@@ -32,6 +32,20 @@ jobs:
             "cmake;3.22.1" \
             "ndk;27.3.13750724"
 
+      - name: Package verified MDX model
+        run: |
+          set -euo pipefail
+          MODEL_DIR="app/src/main/assets/models/mdx"
+          MODEL_FILE="UVR_MDXNET_9482.fp16acc.tflite"
+          MODEL_URL="https://huggingface.co/gyoom-sa/UVR-MDX-LiteRT/resolve/main/${MODEL_FILE}?download=true"
+          MODEL_SHA256="2a07e11db13a11ca4900a54b4a316ef67931e993a6a3d19444bccbbeb9b445ee"
+          mkdir -p "$MODEL_DIR"
+          curl --fail --location --retry 5 --retry-delay 3 \
+            -A "AudiophilePlayer/MDX-build" \
+            -o "$MODEL_DIR/$MODEL_FILE" \
+            "$MODEL_URL"
+          echo "$MODEL_SHA256  $MODEL_DIR/$MODEL_FILE" | sha256sum -c -
+          test "$(stat -c%s "$MODEL_DIR/$MODEL_FILE")" -gt 1000000
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
