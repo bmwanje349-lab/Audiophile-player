@@ -53,6 +53,16 @@ class VocalRemoverUi(
 
         fun playProcessedUri(uri: Uri)
 
+        fun openKaraoke(
+            depth: Float,
+            focus: Float,
+            transientProtection: Float,
+            dryWet: Float,
+            stemGainDb: Float,
+            outputGainDb: Float,
+            ceilingDb: Float,
+        )
+
         fun openBack()
     }
 
@@ -350,6 +360,36 @@ class VocalRemoverUi(
         column.addView(
             action,
             marginTop(14)
+        )
+
+        column.addView(
+            Button(parent.context).apply {
+                text = "Play in live Karaoke mode"
+                setOnClickListener {
+                    val current = host.currentTrack()
+                    if (current == null) {
+                        status.text = "No track is currently selected"
+                    } else {
+                        host.openKaraoke(
+                            depth = depth,
+                            focus = focus,
+                            transientProtection = transientProtection,
+                            dryWet = dryWet,
+                            stemGainDb = stemGainDb,
+                            outputGainDb = outputGainDb,
+                            ceilingDb = ceilingDb,
+                        )
+                    }
+                }
+            },
+            marginTop(10)
+        )
+
+        column.addView(
+            value(
+                "Live mode buffers the first few MDX-Net windows before playback, then keeps processing ahead. Seeking rebuilds the separator from the new position."
+            ),
+            marginTop(6)
         )
 
         updateTrackText()
