@@ -108,4 +108,184 @@ object MdxSeparatorCore {
         }
         return w.coerceIn(0f, 1f)
     }
+    /**
+     * Bounded-memory MDX separator. It accepts arbitrary input blocks at
+     * 44.1 kHz, feeds the real model runner only fixed-size model chunks, and
+     * emits the vocal stem in small blocks.
+     */
+    class StreamingSeparator(
+        private val modelSpec: MdxModelSpec,
+        private val runner: Runner,
+        private val emit: (VocalSeparatorCore.Stereo) -> Unit,
+    ) {
+        companion object {
+            private const val OUTPUT_BLOCK = 8192
+        }
+
+        private val stft = MdxStft(modelSpec)
+        private val chunkSize = stft.chunkSizeSamples()
+        private val crossfade = stft.crossfadeSamples().coerceAtMost(chunkSize / 2)
+
+        private val inputL = FloatArray(chunkSize)
+        private val inputR = FloatArray(chunkSize)
+        private val currentL = FloatArray(chunkSize)
+        private val currentR = FloatArray(chunkSize)
+        private val currentW = FloatArray(chunkSize)
+        private val pendingL = FloatArray(crossfade)
+        private val pendingR = FloatArray(crossfade)
+        private val pendingW = FloatArray(crossfade)
+
+        private var fill = 0
+        private var emittedAny = false
+        private var finished = false
+
+        fun push(block: VocalSeparatorCore.Stereo) {
+            check(!finished) { "MdxSeparatorCore.StreamingSeparator is already finished" }
+            require(block.size > 0)
+
+            var pos = 0
+            while (pos < block.size) {
+                val take = min(chunkSize - fill, block.size - pos)
+                System.arraycopy(block.left, pos, inputL, fill, take)
+                System.arraycopy(block.right, pos, inputR, fill, take)
+                fill += take
+                pos += take
+
+                if (fill == chunkSize) {
+                    processChunk(actualSamples = chunkSize, isLast = false)
+                    retainInputOverlap()
+                }
+            }
+        }
+
+        fun finish() {
+            check(!finished) { "MdxSeparatorCore.StreamingSeparator is already finished" }
+            finished = true
+
+            if (fill == 0 && !emittedAny) return
+
+            processChunk(actualSamples = fill, isLast = true)
+        }
+
+        private fun processChunk(actualSamples: Int, isLast: Boolean) {
+            require(actualSamples in 1..chunkSize)
+
+            java.util.Arrays.fill(inputL, actualSamples, chunkSize, 0f)
+            java.util.Arrays.fill(inputR, actualSamples, chunkSize, 0f)
+
+            val vocal = runner.separateChunk(inputL, inputR)
+            require(vocal.size == chunkSize) {
+                "MDX runner returned ${vocal.size} samples; expected $chunkSize"
+            }
+
+            val isFirst = !emittedAny
+            for (i in 0 until chunkSize) {
+                val w = crossfadeWindow(
+                    index = i,
+                    chunkSize = chunkSize,
+                    crossfade = crossfade,
+                    isFirst = isFirst,
+                    isLast = isLast,
+                )
+                currentL[i] = vocal.left[i] * w * modelSpec.compensation
+                currentR[i] = vocal.right[i] * w * modelSpec.compensation
+                currentW[i] = w
+            }
+
+            if (!emittedAny) {
+                if (isLast) {
+                    emitNormalized(0, actualSamples)
+                } else {
+                    emitNormalized(0, chunkSize - crossfade)
+                    retainWeightedTail()
+                    emittedAny = true
+                }
+                return
+            }
+
+            val overlapL = FloatArray(crossfade)
+            val overlapR = FloatArray(crossfade)
+
+            for (i in 0 until crossfade) {
+                val denom = max(pendingW[i] + currentW[i], 1.0e-12f)
+                overlapL[i] = (pendingL[i] + currentL[i]) / denom
+                overlapR[i] = (pendingR[i] + currentR[i]) / denom
+            }
+
+            emitInBlocks(overlapL, overlapR)
+
+            if (actualSamples > crossfade) {
+                val middleLimit = chunkSize - 2 * crossfade
+                val middleCount = min(
+                    actualSamples - crossfade,
+                    middleLimit,
+                )
+                if (middleCount > 0) {
+                    emitNormalized(crossfade, middleCount)
+                }
+            }
+
+            if (!isLast) {
+                retainWeightedTail()
+            } else {
+                val tailStart = chunkSize - crossfade
+                if (actualSamples > tailStart) {
+                    emitNormalized(
+                        tailStart,
+                        actualSamples - tailStart,
+                    )
+                }
+            }
+
+            emittedAny = true
+        }
+
+        private fun retainInputOverlap() {
+            val start = chunkSize - crossfade
+            System.arraycopy(inputL, start, inputL, 0, crossfade)
+            System.arraycopy(inputR, start, inputR, 0, crossfade)
+            fill = crossfade
+        }
+
+        private fun retainWeightedTail() {
+            val start = chunkSize - crossfade
+            System.arraycopy(currentL, start, pendingL, 0, crossfade)
+            System.arraycopy(currentR, start, pendingR, 0, crossfade)
+            System.arraycopy(currentW, start, pendingW, 0, crossfade)
+        }
+
+        private fun emitNormalized(start: Int, count: Int) {
+            if (count <= 0) return
+            val end = start + count
+            var pos = start
+
+            while (pos < end) {
+                val n = min(OUTPUT_BLOCK, end - pos)
+                val outL = FloatArray(n)
+                val outR = FloatArray(n)
+                for (i in 0 until n) {
+                    val idx = pos + i
+                    val w = max(currentW[idx], 1.0e-12f)
+                    outL[i] = currentL[idx] / w
+                    outR[i] = currentR[idx] / w
+                }
+                emit(VocalSeparatorCore.Stereo(outL, outR))
+                pos += n
+            }
+        }
+
+        private fun emitInBlocks(left: FloatArray, right: FloatArray) {
+            var pos = 0
+            while (pos < left.size) {
+                val n = min(OUTPUT_BLOCK, left.size - pos)
+                val outL = FloatArray(n)
+                val outR = FloatArray(n)
+                System.arraycopy(left, pos, outL, 0, n)
+                System.arraycopy(right, pos, outR, 0, n)
+                emit(VocalSeparatorCore.Stereo(outL, outR))
+                pos += n
+            }
+        }
+    }
+
 }
