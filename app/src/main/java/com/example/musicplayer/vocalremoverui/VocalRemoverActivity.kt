@@ -71,8 +71,17 @@ class VocalRemoverActivity :
         )
     }
 
-    override fun decodeCurrentTrackToStereoPcm(
-        onReady: (VocalRemoverUi.PcmTrack) -> Unit,
+    override fun renderCurrentTrack(
+        depth: Float,
+        focus: Float,
+        transientProtection: Float,
+        dryWet: Float,
+        stemGainDb: Float,
+        outputGainDb: Float,
+        ceilingDb: Float,
+        onProgress: (Float) -> Unit,
+        onMdxChunks: (Long) -> Unit,
+        onReady: (Uri) -> Unit,
         onError: (Throwable) -> Unit,
     ) {
         val source =
@@ -86,37 +95,34 @@ class VocalRemoverActivity :
                     return
                 }
 
-        audioRenderRepository.decodeToStereoPcm(
-            uri = source.uri,
-            onReady = { sampleRate, stereo ->
-                onReady(
-                    VocalRemoverUi.PcmTrack(
-                        sampleRate = sampleRate,
-                        stereo = stereo,
-                    )
-                )
-            },
-            onError = onError,
-        )
-    }
-
-    override fun encodeProcessedTrack(
-        pcm: VocalRemoverUi.PcmTrack,
-        titleSuffix: String,
-        onReady: (Uri) -> Unit,
-        onError: (Throwable) -> Unit,
-    ) {
         val sourceTitle =
-            currentTrack()?.title
+            source.title
+                .takeIf { it.isNotBlank() }
                 ?: "Track"
 
-        processedTrackTitle =
-            sourceTitle + titleSuffix
+        val titleSuffix = " — Instrumental"
+        processedTrackTitle = sourceTitle + titleSuffix
 
-        audioRenderRepository.encodeStereoPcmToWav(
-            pcm = pcm.stereo,
-            sampleRate = pcm.sampleRate,
+        audioRenderRepository.renderVocalRemovalToWav(
+            uri = source.uri,
             titleSuffix = titleSuffix,
+            pipelineFactory = { sampleRate ->
+                com.bmwanje.audiophile.vocalremover.VocalRemoverPipeline(
+                    this,
+                    sampleRate,
+                )
+            },
+            configurePipeline = { pipeline ->
+                pipeline.setDepth(depth)
+                pipeline.setFocus(focus)
+                pipeline.setTransientProtection(transientProtection)
+                pipeline.setDryWet(dryWet)
+                pipeline.setStemGainDb(stemGainDb)
+                pipeline.setOutputGainDb(outputGainDb)
+                pipeline.setCeilingDb(ceilingDb)
+            },
+            onProgress = onProgress,
+            onMdxChunks = onMdxChunks,
             onReady = onReady,
             onError = onError,
         )

@@ -92,6 +92,11 @@ jobs:
           echo "--- app tasks ---"
           gradle :app:tasks --all --console=plain --no-daemon
 
+      - name: Run JVM streaming regression tests
+        run: |
+          set -euo pipefail
+          gradle :app:testDebugUnitTest --console=plain --stacktrace --no-daemon
+
       - name: Build Debug APK
         run: |
           set -euo pipefail

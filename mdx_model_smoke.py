@@ -47,19 +47,37 @@ def main() -> int:
     assert outputs[0].type == "tensor(float)", outputs[0].type
 
     rng = np.random.default_rng(9482)
-    x = rng.normal(0.0, 0.05, size=EXPECTED).astype(np.float32)
-    y = session.run([outputs[0].name], {inputs[0].name: x})[0]
+    max_abs = 0.0
 
-    assert list(y.shape) == EXPECTED, y.shape
-    assert y.dtype == np.float32, y.dtype
-    assert np.isfinite(y).all(), "non-finite ONNX output"
-    assert np.max(np.abs(y)) < 8.0, "implausibly large MDX output"
+    # Exercise the exact fixed tensor contract repeatedly. This mirrors the
+    # Android streaming runner, which sends one padded [1,4,2048,256] tensor
+    # per MDX audio chunk instead of one tensor for the entire song.
+    for chunk_index in range(4):
+        x = rng.normal(
+            0.0,
+            0.05,
+            size=EXPECTED,
+        ).astype(np.float32)
+        y = session.run([outputs[0].name], {inputs[0].name: x})[0]
 
-    print("REAL MDX-NET ONNX MODEL SMOKE TEST PASSED")
+        assert list(y.shape) == EXPECTED, y.shape
+        assert y.dtype == np.float32, y.dtype
+        assert np.isfinite(y).all(), "non-finite ONNX output"
+        max_abs = max(max_abs, float(np.max(np.abs(y))))
+        assert np.max(np.abs(y)) < 8.0, "implausibly large MDX output"
+
+        print(
+            f"real_model_chunk={chunk_index + 1} "
+            f"shape={list(y.shape)} "
+            f"max_abs={np.max(np.abs(y)):.6f}"
+        )
+
+    print("REAL MDX-NET ONNX CHUNK INFERENCE SMOKE TEST PASSED")
     print(f"model_sha256={MODEL_SHA256}")
     print(f"input_shape={inputs[0].shape}")
     print(f"output_shape={outputs[0].shape}")
-    print(f"output_max_abs={np.max(np.abs(y)):.6f}")
+    print("chunk_inference_calls=4")
+    print(f"max_output_abs={max_abs:.6f}")
     return 0
 
 
