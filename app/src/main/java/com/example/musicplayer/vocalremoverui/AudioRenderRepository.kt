@@ -49,9 +49,10 @@ class AudioRenderRepository(
             var pipeline: VocalRemoverPipeline? = null
             var streaming: StreamingVocalRemover? = null
             var writer: StreamingWavWriter? = null
+            var track: AudioTrackResources? = null
 
             try {
-                val track = findAudioTrack(uri)
+                track = findAudioTrack(uri)
 
                 pipeline = pipelineFactory(track.sampleRate)
                 configurePipeline(pipeline)
@@ -99,6 +100,7 @@ class AudioRenderRepository(
                 runCatching { streaming?.close() }
                 runCatching { pipeline?.close() }
                 runCatching { writer?.closeSilently() }
+                runCatching { track?.extractor?.release() }
             }
         }
     }
@@ -337,7 +339,6 @@ class AudioRenderRepository(
         } finally {
             runCatching { decoder.stop() }
             decoder.release()
-            extractor.release()
         }
     }
 
