@@ -375,7 +375,7 @@ class VocalRemoverUi(
     }
 
     private fun ensureModel() {
-        val context = status.context
+        val context = uiContext
 
         if (ModelManager.isInstalled(context)) {
             status.text = "AI model ready"
@@ -613,7 +613,7 @@ class VocalRemoverUi(
     }
 
     private fun card(): LinearLayout =
-        LinearLayout(status.context).apply {
+        LinearLayout(uiContext).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(
                 dp(14),
@@ -626,21 +626,21 @@ class VocalRemoverUi(
         }
 
     private fun sectionTitle(s: String): TextView =
-        TextView(status.context).apply {
+        TextView(uiContext).apply {
             text = s
             setTextColor(this@VocalRemoverUi.textColor)
             textSize = 16f
         }
 
     private fun label(s: String): TextView =
-        TextView(status.context).apply {
+        TextView(uiContext).apply {
             text = s
             setTextColor(secondary)
             textSize = 13f
         }
 
     private fun value(s: String): TextView =
-        TextView(status.context).apply {
+        TextView(uiContext).apply {
             text = s
             setTextColor(this@VocalRemoverUi.textColor)
             textSize = 14f
@@ -654,25 +654,25 @@ class VocalRemoverUi(
         onChanged: (Int) -> Unit,
     ): View {
         val box =
-            LinearLayout(status.context).apply {
+            LinearLayout(uiContext).apply {
                 orientation = LinearLayout.VERTICAL
             }
 
         val row =
-            LinearLayout(status.context).apply {
+            LinearLayout(uiContext).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
             }
 
         val titleView =
-            TextView(status.context).apply {
+            TextView(uiContext).apply {
                 text = title
                 setTextColor(this@VocalRemoverUi.textColor)
                 textSize = 14f
             }
 
         val valueView =
-            TextView(status.context).apply {
+            TextView(uiContext).apply {
                 setTextColor(secondary)
                 textSize = 13f
                 gravity = Gravity.END
@@ -698,7 +698,7 @@ class VocalRemoverUi(
         box.addView(row)
 
         val seek =
-            SeekBar(status.context).apply {
+            SeekBar(uiContext).apply {
                 this.max = max - min
 progress =
     (initial - min).coerceIn(0, this.max)
