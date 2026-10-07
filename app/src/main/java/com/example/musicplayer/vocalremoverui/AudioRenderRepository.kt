@@ -52,9 +52,10 @@ class AudioRenderRepository(
             var track: AudioTrackResources? = null
 
             try {
-                track = findAudioTrack(uri)
+                val audioTrack = findAudioTrack(uri)
+                track = audioTrack
 
-                pipeline = pipelineFactory(track.sampleRate)
+                pipeline = pipelineFactory(audioTrack.sampleRate)
                 configurePipeline(pipeline)
                 pipeline.loadModel()
 
@@ -63,7 +64,7 @@ class AudioRenderRepository(
                 writer =
                     StreamingWavWriter(
                         file = output,
-                        sampleRate = track.sampleRate,
+                        sampleRate = audioTrack.sampleRate,
                     )
 
                 streaming =
@@ -72,10 +73,10 @@ class AudioRenderRepository(
                     }
 
                 decodeTrack(
-                    extractor = track.extractor,
-                    inputFormat = track.format,
+                    extractor = audioTrack.extractor,
+                    inputFormat = audioTrack.format,
                     processor = streaming,
-                    expectedDurationUs = track.durationUs,
+                    expectedDurationUs = audioTrack.durationUs,
                     onProgress = onProgress,
                 )
 
