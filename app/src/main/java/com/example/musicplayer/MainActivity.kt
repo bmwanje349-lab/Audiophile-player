@@ -993,13 +993,23 @@ class MainActivity : AppCompatActivity() {
         startActivity(Intent(this, DspActivity::class.java).putExtra(DspActivity.EXTRA_SECTION, "hub"))
     }
     private fun launchVocalRemover() {
-    startActivity(
-        Intent(
-            this,
-            VocalRemoverActivity::class.java
-        )
-    )
-}
+        val intent = Intent(this, VocalRemoverActivity::class.java)
+
+        controller?.currentMediaItem?.let { item ->
+            item.localConfiguration?.uri?.toString()?.let { uri ->
+                intent.putExtra(VocalRemoverActivity.EXTRA_TRACK_URI, uri)
+            }
+
+            item.mediaMetadata.title
+                ?.toString()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { title ->
+                    intent.putExtra(VocalRemoverActivity.EXTRA_TRACK_TITLE, title)
+                }
+        }
+
+        startActivity(intent)
+    }
     private fun actionButton(icon: Int, description: String, listener: () -> Unit): ImageButton = ImageButton(this).apply {
         setImageResource(icon)
         setColorFilter(TEXT)
