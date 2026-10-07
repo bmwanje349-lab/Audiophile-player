@@ -10,7 +10,8 @@ Decoded stereo PCM
 → host STFT
 → **UVR_MDXNET_9482.onnx**
 → ONNX Runtime inference
-→ iSTFT / overlap-add
+→ UVR-compatible iSTFT / margin reconstruction
+→ compensate predicted vocal stem
 → restore source sample rate
 → existing PremiumVocalRemoverDSP
 → latency-compensated instrumental output
@@ -20,9 +21,13 @@ Decoded stereo PCM
 - File: `UVR_MDXNET_9482.onnx`
 - Runtime: ONNX Runtime Android 1.30.0
 - Input/output contract: `float32 [batch, 4, 2048, 256]` with batch `1` at runtime
-- FFT: 4096
-- Frequency bins: 2048
+- FFT: 6144
+- Hop: 1024
+- One-sided FFT bins before crop: 3073
+- Model frequency bins: 2048 (UVR-cropped)
 - Time frames: 256
+- UVR compensation: 1.035
+- Primary stem: Vocals
 - SHA-256: `f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184`
 
 The production ONNX file is vendored at `app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx` and verified by SHA-256 before use. The Android app never downloads model bytes from the network. The model is copied from APK assets into app-private storage on first use and checksum-verified again before the ONNX Runtime session is created.

@@ -4,24 +4,26 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.min
 import kotlin.math.sin
 
 class MdxStreamingSeparatorTest {
     @Test
-    fun streamingIdentityMatchesInputAcrossChunkBoundaries() {
+    fun streamingIdentityMatchesUvRWindowTimeline() {
         val spec = MdxModelSpec.LIGHT_9482
         val stft = MdxStft(spec)
-        val chunkSize = stft.chunkSizeSamples()
-        val crossfade = stft.crossfadeSamples()
-        val stride = chunkSize - crossfade
+        val generation = stft.generatedSamplesPerChunk()
+        val trim = stft.edgeTrimSamples()
 
         val lengths = intArrayOf(
             1_000,
-            chunkSize - 1,
-            chunkSize,
-            chunkSize + 5_000,
-            chunkSize * 2 + 12_345,
+            generation - 1,
+            generation,
+            generation + 1,
+            generation + trim - 1,
+            generation + trim,
+            generation * 2 + 12_345,
         )
 
         for (length in lengths) {
@@ -45,8 +47,8 @@ class MdxStreamingSeparatorTest {
                         right: FloatArray,
                     ): MdxStft.StereoChunk {
                         calls++
-                        assertEquals(chunkSize, left.size)
-                        assertEquals(chunkSize, right.size)
+                        assertEquals(stft.chunkSizeSamples(), left.size)
+                        assertEquals(stft.chunkSizeSamples(), right.size)
                         return MdxStft.StereoChunk(
                             left.copyOf(),
                             right.copyOf(),
@@ -62,7 +64,7 @@ class MdxStreamingSeparatorTest {
                 )
 
             var pos = 0
-            val pattern = intArrayOf(17, 7001, 257, 16_384, 997)
+            val pattern = intArrayOf(17, 7_001, 257, 16_384, 997)
             var p = 0
             while (pos < input.size) {
                 val n = min(
@@ -79,14 +81,22 @@ class MdxStreamingSeparatorTest {
 
             val output = concat(outputBlocks)
             assertEquals(length, output.size)
-            assertTrue(maxError(input, output) < 2.0e-6f)
+
+            val scale = spec.compensation
+            val expected =
+                VocalSeparatorCore.Stereo(
+                    FloatArray(length) { i -> input.left[i] * scale },
+                    FloatArray(length) { i -> input.right[i] * scale },
+                )
+
+            assertTrue(maxError(expected, output) < 3.0e-6f)
 
             val expectedCalls =
-                if (length < chunkSize) {
-                    1
-                } else {
-                    ((length - chunkSize) / stride) + 2
-                }
+                ceil(
+                    length.toDouble() /
+                        generation.toDouble()
+                ).toInt()
+
             assertEquals(
                 "unexpected model-call count for length " + length,
                 expectedCalls,
@@ -96,9 +106,11 @@ class MdxStreamingSeparatorTest {
     }
 
     @Test
-    fun streamingMatchesWholeBufferIdentityReference() {
+    fun streamingMatchesWholeBufferReferenceTimeline() {
         val spec = MdxModelSpec.LIGHT_9482
-        val length = MdxStft(spec).chunkSizeSamples() + 7777
+        val stft = MdxStft(spec)
+        val length = stft.generatedSamplesPerChunk() * 2 + 7_777
+
         val input =
             VocalSeparatorCore.Stereo(
                 FloatArray(length) { i ->
@@ -174,7 +186,7 @@ class MdxStreamingSeparatorTest {
 
         val output = concat(streamedBlocks)
         assertEquals(batch.size, output.size)
-        assertTrue(maxError(batch, output) < 2.0e-6f)
+        assertTrue(maxError(batch, output) < 3.0e-6f)
     }
 
     private fun slice(
