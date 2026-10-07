@@ -83,3 +83,8 @@ Model installation is checksum-gated and asset-only. Session construction is met
 ## UI
 
 The AI Vocal Remover remains an offline-processing feature. It does not replace the regular EQ or stereo-widener render chain.
+
+
+## Build validation marker
+
+A clean Android build is required to verify that the installed APK actually contains the pinned MDX model asset and the audiophile_vocal_remover native library.
