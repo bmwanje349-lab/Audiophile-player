@@ -3,6 +3,8 @@ name: Build Android APK
 on:
   push:
     branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
   workflow_dispatch:
 
 jobs:
@@ -32,21 +34,6 @@ jobs:
             "cmake;3.22.1" \
             "ndk;27.3.13750724"
 
-      - name: Package verified MDX 9482 ONNX model
-        run: |
-          set -euo pipefail
-          MODEL_DIR="app/src/main/assets/models/mdx"
-          MODEL_FILE="UVR_MDXNET_9482.onnx"
-          MODEL_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models/UVR_MDXNET_9482.onnx"
-          MODEL_SHA256="f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184"
-          mkdir -p "$MODEL_DIR"
-          curl --fail --location --retry 5 --retry-delay 3 \
-            -A "AudiophilePlayer/MDX-build" \
-            -o "$MODEL_DIR/$MODEL_FILE" \
-            "$MODEL_URL"
-          echo "$MODEL_SHA256  $MODEL_DIR/$MODEL_FILE" | sha256sum -c -
-          test "$(stat -c%s "$MODEL_DIR/$MODEL_FILE")" -gt 1000000
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -56,46 +43,34 @@ jobs:
         run: |
           pwd
           ls -la
-
           echo "--- app folder ---"
           ls -la app || echo "NO app FOLDER"
-
           echo "--- app/build.gradle.kts (first 12 lines) ---"
           head -12 app/build.gradle.kts || echo "NO app/build.gradle.kts"
-
           echo "--- settings ---"
           cat settings.gradle.kts
-
           echo "--- all build files ---"
           find . -name "build.gradle*" -not -path "./.git/*"
-
           echo "--- gradle projects ---"
           gradle projects --console=plain --no-daemon
-
           echo "--- app tasks ---"
           gradle :app:tasks --all --console=plain --no-daemon
 
       - name: Build Debug APK
         run: |
           set +e
-
           gradle :app:assembleDebug \
             --console=plain \
             --stacktrace \
             --no-daemon \
             2>&1 | tee build.log
-
           status=${PIPESTATUS[0]}
-
           echo "=================== ERROR SUMMARY ==================="
-
           grep -n -E \
             "^e: |What went wrong|error:|CMake Error|Execution failed|> .*(not found|Unresolved|Could not)" \
             -A4 \
             build.log | head -80
-
           echo "======================================================"
-
           exit "$status"
 
       - name: Upload Debug APK
