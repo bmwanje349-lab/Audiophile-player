@@ -1,9 +1,9 @@
 name: Export verified source ZIP
 
 on:
-  push:
+  pull_request:
     branches:
-      - export/verified-source-20261007
+      - main
 
 permissions:
   contents: read
