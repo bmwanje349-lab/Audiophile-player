@@ -32,6 +32,10 @@ Representative previous numerical results included 113.22 dB 9482 STFT/iSTFT SNR
 
 Those are baseline regression results, not a substitute for the current GitHub CI run.
 
+## Latest repair gate
+
+The current branch includes the ONNX dynamic-batch validation and HTTP 416 download-resume fix. CI must pass the real model smoke test and the Android debug build on this current head before merge.
+
 ## Acceptance rule
 
 Do not mark the integration as production-ready until the current GitHub Actions run passes both:
