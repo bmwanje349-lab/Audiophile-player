@@ -9,8 +9,8 @@ import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.example.musicplayer.vocalremoverui.VocalRemoverActivity
@@ -29,6 +29,8 @@ class LiveKaraokeActivity : AppCompatActivity() {
             "extra_live_karaoke_track_uri"
         const val EXTRA_TRACK_TITLE =
             "extra_live_karaoke_track_title"
+        const val EXTRA_TRACK_POSITION_MS =
+            "extra_live_karaoke_track_position_ms"
     }
 
     private var service: LiveKaraokeService? = null
@@ -36,6 +38,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
 
     private var trackUri: String? = null
     private var trackTitle = "Live Karaoke"
+    private var initialPositionMs = 0L
 
     private lateinit var status: TextView
     private lateinit var progress: SeekBar
@@ -191,7 +194,18 @@ class LiveKaraokeActivity : AppCompatActivity() {
                 ?.takeIf { it.isNotBlank() }
                 ?: "Live Karaoke"
 
+        initialPositionMs =
+            intent.getLongExtra(
+                EXTRA_TRACK_POSITION_MS,
+                0L,
+            )
+                .coerceAtLeast(0L)
+
         setContentView(buildUi())
+        progress.progress =
+            initialPositionMs
+                .coerceAtMost(Int.MAX_VALUE.toLong())
+                .toInt()
     }
 
     override fun onStart() {
@@ -202,11 +216,6 @@ class LiveKaraokeActivity : AppCompatActivity() {
                 this,
                 LiveKaraokeService::class.java,
             )
-
-        ContextCompat.startForegroundService(
-            this,
-            intent,
-        )
 
         bindService(
             intent,
@@ -531,26 +540,34 @@ class LiveKaraokeActivity : AppCompatActivity() {
             LiveKaraokeEngine.State.STOPPED -> {
                 val uri = trackUri ?: return
 
-                startActivityIfMediaPlayerIsBusy {
-                    active.start(
-                        android.net.Uri.parse(uri),
-                        progress.progress.toLong(),
-                        LiveKaraokeEngine.Settings(),
-                    )
-                }
+                val startIntent =
+                    Intent(
+                        this,
+                        LiveKaraokeService::class.java,
+                    ).apply {
+                        putExtra(
+                            LiveKaraokeService.EXTRA_URI,
+                            uri,
+                        )
+                        putExtra(
+                            LiveKaraokeService.EXTRA_TITLE,
+                            trackTitle,
+                        )
+                        putExtra(
+                            LiveKaraokeService.EXTRA_POSITION_MS,
+                            progress.progress.toLong(),
+                        )
+                    }
+
+                ContextCompat.startForegroundService(
+                    this,
+                    startIntent,
+                )
             }
 
             LiveKaraokeEngine.State.BUFFERING,
             LiveKaraokeEngine.State.SEEKING -> Unit
         }
-    }
-
-    private fun startActivityIfMediaPlayerIsBusy(
-        startLive: () -> Unit,
-    ) {
-        // Keep the normal Media3 player from competing for the same output
-        // device while the dedicated live AudioTrack is active.
-        startLive()
     }
 
     private fun formatTime(
