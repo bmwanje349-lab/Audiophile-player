@@ -44,6 +44,7 @@ class LiveKaraokeService : Service() {
 
     private lateinit var engine: LiveKaraokeEngine
     private var trackTitle = "Live Karaoke"
+    private var trackUri: String? = null
 
     inner class LocalBinder : Binder() {
         fun service(): LiveKaraokeService = this@LiveKaraokeService
@@ -132,6 +133,7 @@ class LiveKaraokeService : Service() {
                 intent.getStringExtra(EXTRA_TITLE)
                     ?.takeIf { it.isNotBlank() }
                     ?: "Live Karaoke"
+            trackUri = uri
 
             startForeground(
                 NOTIFICATION_ID,
@@ -235,6 +237,16 @@ class LiveKaraokeService : Service() {
                     flags =
                         Intent.FLAG_ACTIVITY_SINGLE_TOP or
                             Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    trackUri?.let {
+                        putExtra(
+                            LiveKaraokeActivity.EXTRA_TRACK_URI,
+                            it,
+                        )
+                    }
+                    putExtra(
+                        LiveKaraokeActivity.EXTRA_TRACK_TITLE,
+                        trackTitle,
+                    )
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or
                     PendingIntent.FLAG_IMMUTABLE,
