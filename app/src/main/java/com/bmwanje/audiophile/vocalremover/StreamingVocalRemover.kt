@@ -104,6 +104,9 @@ class StreamingVocalRemover(
         check(!finished) { "StreamingVocalRemover is already finished" }
         finished = true
 
+        require(sourceSamples > 0L) {
+            "Cannot render an empty audio stream"
+        }
         require(sourceSamples <= Int.MAX_VALUE) {
             "Source track is too large for the Android FloatArray pipeline"
         }
