@@ -28,7 +28,7 @@ The exact verified model is:
 |---|---|---|---:|
 | `LIGHT_9482` | `UVR_MDXNET_9482.onnx` | `f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184` | ~30 MB |
 
-The model is committed at:
+The model is committed at (verified in CI before the Android build):
 
 ```
 app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx
