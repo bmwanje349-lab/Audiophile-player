@@ -76,3 +76,6 @@ GitHub Actions performs the following model/build gates:
 7. Upload the APK and build log.
 
 A successful Android build therefore uses the exact model bytes that are checked into the repository, with no model download during the build.
+
+
+> The first main-branch bootstrap vendors the pinned ONNX binary; subsequent Android builds consume the repository copy directly.
