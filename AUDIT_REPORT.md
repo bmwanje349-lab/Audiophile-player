@@ -64,11 +64,7 @@ The application now:
 
 There is no HTTP client in the model manager.
 
-### 5. Build-time model vendoring
-
-A separate one-time GitHub Actions workflow can bootstrap the exact pinned ONNX binary into the repository when the asset is missing. The normal Android build workflow only verifies and uses the committed asset; it does not download the model.
-
-### 6. Model format distinction
+### 5. Model format distinction
 
 The file `UVR_MDXNET_9482.fp16acc.tflite` is a TFLite binary, not an ONNX binary. Its metadata identifies it as a 9482 MDX-derived model with NCHW I/O, but ONNX Runtime cannot execute a TFLite file directly. It therefore is not substituted into the ONNX execution path.
 
