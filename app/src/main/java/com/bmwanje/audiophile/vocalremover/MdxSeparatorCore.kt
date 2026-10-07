@@ -1,20 +1,24 @@
 package com.bmwanje.audiophile.vocalremover
 
-import kotlin.math.max
 import kotlin.math.min
 
 /**
  * MDX-Net vocal separation orchestration.
  *
- * Audio is resampled to 44.1 kHz, processed in native 256-frame model chunks,
- * crossfaded at 10%, then resampled back. This class does not touch the premium
- * vocal-removal DSP; it only supplies the neural vocal stem to it.
+ * The chunking here follows the UVR MDX-Net reference path rather than applying
+ * an arbitrary crossfade. Each model window contains n_fft/2 samples of left
+ * context and n_fft/2 samples of right context, and only the central
+ * chunkSize - n_fft samples are emitted. This removes the model's edge region
+ * before the vocal stem is returned to the existing premium DSP.
  */
 object MdxSeparatorCore {
     const val MODEL_SAMPLE_RATE = MdxStft.SAMPLE_RATE
 
     interface Runner {
-        fun separateChunk(left: FloatArray, right: FloatArray): MdxStft.StereoChunk
+        fun separateChunk(
+            left: FloatArray,
+            right: FloatArray,
+        ): MdxStft.StereoChunk
     }
 
     fun separate(
@@ -26,13 +30,24 @@ object MdxSeparatorCore {
         require(sampleRate >= 8_000) { "Unsupported sample rate: $sampleRate" }
         require(input.size > 0) { "Input audio is empty" }
 
-        val atModelRate = if (sampleRate == MODEL_SAMPLE_RATE) {
-            input
-        } else {
-            VocalSeparatorCore.WindowedSincResampler.resample(input, sampleRate, MODEL_SAMPLE_RATE)
-        }
+        val atModelRate =
+            if (sampleRate == MODEL_SAMPLE_RATE) {
+                input
+            } else {
+                VocalSeparatorCore.WindowedSincResampler.resample(
+                    input,
+                    sampleRate,
+                    MODEL_SAMPLE_RATE,
+                )
+            }
 
-        val vocalAtModelRate = separateAtModelRate(atModelRate, modelSpec, runner)
+        val vocalAtModelRate =
+            separateAtModelRate(
+                atModelRate,
+                modelSpec,
+                runner,
+            )
+
         return if (sampleRate == MODEL_SAMPLE_RATE) {
             vocalAtModelRate
         } else {
@@ -44,74 +59,115 @@ object MdxSeparatorCore {
         }
     }
 
+    /**
+     * UVR-style chunk reconstruction.
+     *
+     * For each generation region [start, start + generation), the model sees
+     * [start - trim, start + generation + trim). Samples outside the source are
+     * zero. Only the central generation region is copied from the model output.
+     */
     fun separateAtModelRate(
         input: VocalSeparatorCore.Stereo,
         modelSpec: MdxModelSpec,
         runner: Runner,
     ): VocalSeparatorCore.Stereo {
+        require(input.size > 0) { "Input audio is empty" }
+
         val stft = MdxStft(modelSpec)
         val chunkSize = stft.chunkSizeSamples()
-        val crossfade = stft.crossfadeSamples().coerceAtMost(chunkSize / 2)
-        val stride = max(1, chunkSize - crossfade)
+        val trim = stft.edgeTrimSamples()
+        val generation = stft.generatedSamplesPerChunk()
         val total = input.size
-        val chunkCount = max(1, ((total - 1) / stride) + 1)
 
         val outL = FloatArray(total)
         val outR = FloatArray(total)
-        val weights = FloatArray(total)
-        val inL = FloatArray(chunkSize)
-        val inR = FloatArray(chunkSize)
+        val windowL = FloatArray(chunkSize)
+        val windowR = FloatArray(chunkSize)
 
-        for (chunkIndex in 0 until chunkCount) {
-            val start = chunkIndex * stride
-            if (start >= total) break
-            val actual = min(chunkSize, total - start)
-            java.util.Arrays.fill(inL, 0f)
-            java.util.Arrays.fill(inR, 0f)
-            System.arraycopy(input.left, start, inL, 0, actual)
-            System.arraycopy(input.right, start, inR, 0, actual)
+        var start = 0
+        while (start < total) {
+            java.util.Arrays.fill(windowL, 0f)
+            java.util.Arrays.fill(windowR, 0f)
 
-            val vocal = runner.separateChunk(inL, inR)
-            require(vocal.size == chunkSize) { "MDX runner returned an invalid chunk size" }
+            val sourceStart = start - trim
+            val sourceCopyStart = sourceStart.coerceAtLeast(0)
+            val destinationStart = (-sourceStart).coerceAtLeast(0)
+            val copyCount =
+                min(
+                    chunkSize - destinationStart,
+                    total - sourceCopyStart,
+                )
 
-            val isFirst = chunkIndex == 0
-            val isLast = chunkIndex == chunkCount - 1 || start + chunkSize >= total
-            for (i in 0 until actual) {
-                val w = crossfadeWindow(i, chunkSize, crossfade, isFirst, isLast)
-                outL[start + i] += vocal.left[i] * w * modelSpec.compensation
-                outR[start + i] += vocal.right[i] * w * modelSpec.compensation
-                weights[start + i] += w
+            if (copyCount > 0) {
+                System.arraycopy(
+                    input.left,
+                    sourceCopyStart,
+                    windowL,
+                    destinationStart,
+                    copyCount,
+                )
+                System.arraycopy(
+                    input.right,
+                    sourceCopyStart,
+                    windowR,
+                    destinationStart,
+                    copyCount,
+                )
             }
+
+            val vocal =
+                runner.separateChunk(
+                    windowL,
+                    windowR,
+                )
+            require(vocal.size == chunkSize) {
+                "MDX runner returned " + vocal.size +
+                    " samples; expected " + chunkSize
+            }
+
+            val actual = min(generation, total - start)
+            emitCompensated(
+                vocal.left,
+                vocal.right,
+                sourceOffset = trim,
+                destination = start,
+                count = actual,
+                modelSpec = modelSpec,
+                outputLeft = outL,
+                outputRight = outR,
+            )
+
+            start += generation
         }
 
-        for (i in 0 until total) {
-            val w = max(weights[i], 1.0e-6f)
-            outL[i] /= w
-            outR[i] /= w
-        }
         return VocalSeparatorCore.Stereo(outL, outR)
     }
 
-    private fun crossfadeWindow(
-        index: Int,
-        chunkSize: Int,
-        crossfade: Int,
-        isFirst: Boolean,
-        isLast: Boolean,
-    ): Float {
-        var w = 1f
-        if (!isFirst && index < crossfade) {
-            w *= index.toFloat() / crossfade.toFloat()
+    private fun emitCompensated(
+        sourceLeft: FloatArray,
+        sourceRight: FloatArray,
+        sourceOffset: Int,
+        destination: Int,
+        count: Int,
+        modelSpec: MdxModelSpec,
+        outputLeft: FloatArray,
+        outputRight: FloatArray,
+    ) {
+        val gain = modelSpec.compensation
+        for (i in 0 until count) {
+            outputLeft[destination + i] =
+                sourceLeft[sourceOffset + i] * gain
+            outputRight[destination + i] =
+                sourceRight[sourceOffset + i] * gain
         }
-        if (!isLast && index >= chunkSize - crossfade) {
-            w *= (chunkSize - index).toFloat() / crossfade.toFloat()
-        }
-        return w.coerceIn(0f, 1f)
     }
+
     /**
-     * Bounded-memory MDX separator. It accepts arbitrary input blocks at
-     * 44.1 kHz, feeds the real model runner only fixed-size model chunks, and
-     * emits the vocal stem in small blocks.
+     * Bounded-memory UVR-compatible streaming separator at 44.1 kHz.
+     *
+     * Before the first inference, the buffer collects generation + right-context
+     * samples. Every subsequent inference advances by exactly generation samples
+     * and reuses the preceding 2 * trim samples as the overlapping context.
      */
     class StreamingSeparator(
         private val modelSpec: MdxModelSpec,
@@ -124,168 +180,313 @@ object MdxSeparatorCore {
 
         private val stft = MdxStft(modelSpec)
         private val chunkSize = stft.chunkSizeSamples()
-        private val crossfade = stft.crossfadeSamples().coerceAtMost(chunkSize / 2)
+        private val trim = stft.edgeTrimSamples()
+        private val generation = stft.generatedSamplesPerChunk()
+        private val overlap = 2 * trim
 
-        private val inputL = FloatArray(chunkSize)
-        private val inputR = FloatArray(chunkSize)
-        private val currentL = FloatArray(chunkSize)
-        private val currentR = FloatArray(chunkSize)
-        private val currentW = FloatArray(chunkSize)
-        private val pendingL = FloatArray(crossfade)
-        private val pendingR = FloatArray(crossfade)
-        private val pendingW = FloatArray(crossfade)
+        private val windowL = FloatArray(chunkSize)
+        private val windowR = FloatArray(chunkSize)
+        private val incomingL = FloatArray(generation + trim)
+        private val incomingR = FloatArray(generation + trim)
+        private val historyL = FloatArray(overlap)
+        private val historyR = FloatArray(overlap)
 
         private var fill = 0
-        private var emittedAny = false
+        private var processedAny = false
         private var finished = false
 
         fun push(block: VocalSeparatorCore.Stereo) {
-            check(!finished) { "MdxSeparatorCore.StreamingSeparator is already finished" }
+            check(!finished) {
+                "MdxSeparatorCore.StreamingSeparator is already finished"
+            }
             require(block.size > 0)
 
             var pos = 0
             while (pos < block.size) {
-                val take = min(chunkSize - fill, block.size - pos)
-                System.arraycopy(block.left, pos, inputL, fill, take)
-                System.arraycopy(block.right, pos, inputR, fill, take)
+                val required =
+                    if (processedAny) generation else generation + trim
+
+                val take =
+                    min(
+                        required - fill,
+                        block.size - pos,
+                    )
+
+                System.arraycopy(
+                    block.left,
+                    pos,
+                    incomingL,
+                    fill,
+                    take,
+                )
+                System.arraycopy(
+                    block.right,
+                    pos,
+                    incomingR,
+                    fill,
+                    take,
+                )
                 fill += take
                 pos += take
 
-                if (fill == chunkSize) {
-                    processChunk(actualSamples = chunkSize, isLast = false)
-                    retainInputOverlap()
+                if (fill == required) {
+                    processFullWindow()
                 }
             }
         }
 
         fun finish() {
-            check(!finished) { "MdxSeparatorCore.StreamingSeparator is already finished" }
+            check(!finished) {
+                "MdxSeparatorCore.StreamingSeparator is already finished"
+            }
             finished = true
 
-            if (fill == 0 && !emittedAny) return
+            if (!processedAny) {
+                when {
+                    fill == 0 -> return
+                    fill <= generation -> {
+                        java.util.Arrays.fill(windowL, 0f)
+                        java.util.Arrays.fill(windowR, 0f)
+                        System.arraycopy(
+                            incomingL,
+                            0,
+                            windowL,
+                            trim,
+                            fill,
+                        )
+                        System.arraycopy(
+                            incomingR,
+                            0,
+                            windowR,
+                            trim,
+                            fill,
+                        )
 
-            processChunk(actualSamples = fill, isLast = true)
+                        val vocal = runner.separateChunk(windowL, windowR)
+                        require(vocal.size == chunkSize)
+                        emitRange(
+                            vocal,
+                            sourceOffset = trim,
+                            count = fill,
+                        )
+                        return
+                    }
+                    else -> {
+                        val firstCount = fill
+                        buildFirstWindow(firstCount)
+                        val vocal = runner.separateChunk(windowL, windowR)
+                        require(vocal.size == chunkSize)
+
+                        emitRange(
+                            vocal,
+                            sourceOffset = trim,
+                            count = generation,
+                        )
+                        retainTail()
+                        processedAny = true
+                        val remaining = firstCount - generation
+                        fill = 0
+
+                        if (remaining > 0) {
+                            flushFinalWindows(remaining)
+                        }
+                        return
+                    }
+                }
+            }
+
+            flushFinalWindows(trim + fill)
+            fill = 0
         }
 
-        private fun processChunk(actualSamples: Int, isLast: Boolean) {
-            require(actualSamples in 1..chunkSize)
-
-            java.util.Arrays.fill(inputL, actualSamples, chunkSize, 0f)
-            java.util.Arrays.fill(inputR, actualSamples, chunkSize, 0f)
-
-            val vocal = runner.separateChunk(inputL, inputR)
-            require(vocal.size == chunkSize) {
-                "MDX runner returned ${vocal.size} samples; expected $chunkSize"
-            }
-
-            val isFirst = !emittedAny
-            for (i in 0 until chunkSize) {
-                val w = crossfadeWindow(
-                    index = i,
-                    chunkSize = chunkSize,
-                    crossfade = crossfade,
-                    isFirst = isFirst,
-                    isLast = isLast,
-                )
-                currentL[i] = vocal.left[i] * w * modelSpec.compensation
-                currentR[i] = vocal.right[i] * w * modelSpec.compensation
-                currentW[i] = w
-            }
-
-            if (!emittedAny) {
-                if (isLast) {
-                    emitNormalized(0, actualSamples)
-                } else {
-                    emitNormalized(0, chunkSize - crossfade)
-                    retainWeightedTail()
-                    emittedAny = true
-                }
-                return
-            }
-
-            val overlapL = FloatArray(crossfade)
-            val overlapR = FloatArray(crossfade)
-
-            for (i in 0 until crossfade) {
-                val denom = max(pendingW[i] + currentW[i], 1.0e-12f)
-                overlapL[i] = (pendingL[i] + currentL[i]) / denom
-                overlapR[i] = (pendingR[i] + currentR[i]) / denom
-            }
-
-            emitInBlocks(overlapL, overlapR)
-
-            if (actualSamples > crossfade) {
-                val middleLimit = chunkSize - 2 * crossfade
-                val middleCount = min(
-                    actualSamples - crossfade,
-                    middleLimit,
-                )
-                if (middleCount > 0) {
-                    emitNormalized(crossfade, middleCount)
-                }
-            }
-
-            if (!isLast) {
-                retainWeightedTail()
+        private fun processFullWindow() {
+            if (!processedAny) {
+                buildFirstWindow(fill)
             } else {
-                val tailStart = chunkSize - crossfade
-                if (actualSamples > tailStart) {
-                    emitNormalized(
-                        tailStart,
-                        actualSamples - tailStart,
+                java.util.Arrays.fill(windowL, 0f)
+                java.util.Arrays.fill(windowR, 0f)
+                System.arraycopy(
+                    historyL,
+                    0,
+                    windowL,
+                    0,
+                    overlap,
+                )
+                System.arraycopy(
+                    historyR,
+                    0,
+                    windowR,
+                    0,
+                    overlap,
+                )
+                System.arraycopy(
+                    incomingL,
+                    0,
+                    windowL,
+                    overlap,
+                    generation,
+                )
+                System.arraycopy(
+                    incomingR,
+                    0,
+                    windowR,
+                    overlap,
+                    generation,
+                )
+            }
+
+            val vocal = runner.separateChunk(windowL, windowR)
+            require(vocal.size == chunkSize) {
+                "MDX runner returned " + vocal.size +
+                    " samples; expected " + chunkSize
+            }
+
+            emitRange(
+                vocal,
+                sourceOffset = trim,
+                count = generation,
+            )
+            retainTail()
+            processedAny = true
+            fill = 0
+        }
+
+        private fun buildFirstWindow(actualInput: Int) {
+            java.util.Arrays.fill(windowL, 0f)
+            java.util.Arrays.fill(windowR, 0f)
+            System.arraycopy(
+                incomingL,
+                0,
+                windowL,
+                trim,
+                actualInput,
+            )
+            System.arraycopy(
+                incomingR,
+                0,
+                windowR,
+                trim,
+                actualInput,
+            )
+        }
+
+        private fun flushFinalWindows(initialRemaining: Int) {
+            var remaining = initialRemaining.coerceAtLeast(0)
+
+            while (remaining > 0) {
+                java.util.Arrays.fill(
+                    windowL,
+                    overlap,
+                    chunkSize,
+                    0f,
+                )
+                java.util.Arrays.fill(
+                    windowR,
+                    overlap,
+                    chunkSize,
+                    0f,
+                )
+                System.arraycopy(
+                    historyL,
+                    0,
+                    windowL,
+                    0,
+                    overlap,
+                )
+                System.arraycopy(
+                    historyR,
+                    0,
+                    windowR,
+                    0,
+                    overlap,
+                )
+
+                if (fill > 0) {
+                    System.arraycopy(
+                        incomingL,
+                        0,
+                        windowL,
+                        overlap,
+                        fill,
+                    )
+                    System.arraycopy(
+                        incomingR,
+                        0,
+                        windowR,
+                        overlap,
+                        fill,
                     )
                 }
-            }
 
-            emittedAny = true
-        }
-
-        private fun retainInputOverlap() {
-            val start = chunkSize - crossfade
-            System.arraycopy(inputL, start, inputL, 0, crossfade)
-            System.arraycopy(inputR, start, inputR, 0, crossfade)
-            fill = crossfade
-        }
-
-        private fun retainWeightedTail() {
-            val start = chunkSize - crossfade
-            System.arraycopy(currentL, start, pendingL, 0, crossfade)
-            System.arraycopy(currentR, start, pendingR, 0, crossfade)
-            System.arraycopy(currentW, start, pendingW, 0, crossfade)
-        }
-
-        private fun emitNormalized(start: Int, count: Int) {
-            if (count <= 0) return
-            val end = start + count
-            var pos = start
-
-            while (pos < end) {
-                val n = min(OUTPUT_BLOCK, end - pos)
-                val outL = FloatArray(n)
-                val outR = FloatArray(n)
-                for (i in 0 until n) {
-                    val idx = pos + i
-                    val w = max(currentW[idx], 1.0e-12f)
-                    outL[i] = currentL[idx] / w
-                    outR[i] = currentR[idx] / w
+                val vocal = runner.separateChunk(windowL, windowR)
+                require(vocal.size == chunkSize) {
+                    "MDX runner returned " + vocal.size +
+                        " samples; expected " + chunkSize
                 }
-                emit(VocalSeparatorCore.Stereo(outL, outR))
-                pos += n
+
+                val take = min(generation, remaining)
+                emitRange(
+                    vocal,
+                    sourceOffset = trim,
+                    count = take,
+                )
+                remaining -= take
+
+                if (remaining > 0) {
+                    retainTail()
+                    fill = 0
+                }
             }
         }
 
-        private fun emitInBlocks(left: FloatArray, right: FloatArray) {
+        private fun retainTail() {
+            val start = chunkSize - overlap
+            System.arraycopy(
+                windowL,
+                start,
+                historyL,
+                0,
+                overlap,
+            )
+            System.arraycopy(
+                windowR,
+                start,
+                historyR,
+                0,
+                overlap,
+            )
+        }
+
+        private fun emitRange(
+            vocal: MdxStft.StereoChunk,
+            sourceOffset: Int,
+            count: Int,
+        ) {
+            if (count <= 0) return
+
+            val gain = modelSpec.compensation
             var pos = 0
-            while (pos < left.size) {
-                val n = min(OUTPUT_BLOCK, left.size - pos)
-                val outL = FloatArray(n)
-                val outR = FloatArray(n)
-                System.arraycopy(left, pos, outL, 0, n)
-                System.arraycopy(right, pos, outR, 0, n)
-                emit(VocalSeparatorCore.Stereo(outL, outR))
+
+            while (pos < count) {
+                val n = min(OUTPUT_BLOCK, count - pos)
+                val left = FloatArray(n)
+                val right = FloatArray(n)
+
+                for (i in 0 until n) {
+                    left[i] =
+                        vocal.left[sourceOffset + pos + i] * gain
+                    right[i] =
+                        vocal.right[sourceOffset + pos + i] * gain
+                }
+
+                emit(
+                    VocalSeparatorCore.Stereo(
+                        left,
+                        right,
+                    )
+                )
                 pos += n
             }
         }
     }
-
 }
