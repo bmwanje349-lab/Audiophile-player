@@ -72,7 +72,6 @@ class AudioRenderRepository(
 
                 decodeTrack(
                     extractor = track.extractor,
-                    decoder = track.decoder,
                     inputFormat = track.format,
                     processor = streaming,
                     expectedDurationUs = track.durationUs,
@@ -479,9 +478,12 @@ class AudioRenderRepository(
 
     private data class AudioTrackResources(
         val extractor: MediaExtractor,
-        val decoder: MediaCodec,
         val format: MediaFormat,
-        val durationUs: Long? = format.getLongSafely(MediaFormat.KEY_DURATION),
+        val sampleRate: Int =
+            format.getIntegerSafely(MediaFormat.KEY_SAMPLE_RATE)
+                ?: error("Audio sample rate is missing"),
+        val durationUs: Long? =
+            format.getLongSafely(MediaFormat.KEY_DURATION),
     )
 
     private fun MediaFormat.getIntegerSafely(
