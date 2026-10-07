@@ -138,6 +138,13 @@ class AudioRenderRepository(
             return AudioTrackResources(
                 extractor = extractor,
                 format = format,
+                sampleRate =
+                    format.getIntegerSafely(
+                        MediaFormat.KEY_SAMPLE_RATE
+                    )
+                        ?: error("Audio sample rate is missing"),
+                durationUs =
+                    format.getLongSafely(MediaFormat.KEY_DURATION),
             )
         } catch (throwable: Throwable) {
             extractor.release()
@@ -479,11 +486,8 @@ class AudioRenderRepository(
     private data class AudioTrackResources(
         val extractor: MediaExtractor,
         val format: MediaFormat,
-        val sampleRate: Int =
-            format.getIntegerSafely(MediaFormat.KEY_SAMPLE_RATE)
-                ?: error("Audio sample rate is missing"),
-        val durationUs: Long? =
-            format.getLongSafely(MediaFormat.KEY_DURATION),
+        val sampleRate: Int,
+        val durationUs: Long?,
     )
 
     private fun MediaFormat.getIntegerSafely(
