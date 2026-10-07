@@ -65,6 +65,12 @@ class LiveKaraokeEngine(
 
     private val appContext = context.applicationContext
     private val modelSpec = MdxModelSpec.LIGHT_9482
+
+    private companion object {
+        const val MAX_LOOKAHEAD_FRAMES = 529_200
+        const val SEEK_CONTEXT_MARGIN_MS = 100L
+    }
+
     private val lock = Any()
     private var session: Session? = null
     private var generation = 0L
@@ -264,7 +270,7 @@ class LiveKaraokeEngine(
                 if (!isCurrent(id)) return
 
                 extractor = MediaExtractor()
-                extractor.setDataSource(appContext, uri)
+                extractor.setDataSource(appContext, uri, null)
 
                 val trackIndex = findAudioTrack(extractor)
                 val inputFormat = extractor.getTrackFormat(trackIndex)
@@ -1055,9 +1061,5 @@ class LiveKaraokeEngine(
 
         private var actualDecodeStartMs = 0L
 
-        companion object {
-            private const val MAX_LOOKAHEAD_FRAMES = 529_200
-            private const val SEEK_CONTEXT_MARGIN_MS = 100L
-        }
     }
 }
