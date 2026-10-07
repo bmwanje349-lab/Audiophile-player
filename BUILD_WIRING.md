@@ -28,13 +28,13 @@ The exact verified model is:
 |---|---|---|---:|
 | `LIGHT_9482` | `UVR_MDXNET_9482.onnx` | `f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184` | ~30 MB |
 
-The model is committed at (verified in CI before the Android build):
+The model is committed in the repository and verified in CI before the Android build:
 
 ```
 app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx
 ```
 
-A one-time vendor workflow may populate that path if the asset is missing. The normal Android build only verifies the committed file; it does not download the model.
+The normal Android build only verifies the committed file; it does not download the model.
 
 The app then copies that asset to app-private storage and verifies the same checksum before loading it.
 
