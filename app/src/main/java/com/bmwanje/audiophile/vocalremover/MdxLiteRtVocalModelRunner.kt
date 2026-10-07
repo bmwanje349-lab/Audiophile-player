@@ -16,7 +16,7 @@ class MdxLiteRtVocalModelRunner(
     modelPath: String,
     private val modelSpec: MdxModelSpec,
     cpuThreads: Int = 4,
- ) : AutoCloseable, MdxSeparatorCore.Runner {
+) : AutoCloseable, MdxSeparatorCore.Runner {
 
     private val stft = MdxStft(modelSpec)
     private val environment = OrtEnvironment.getEnvironment()
@@ -49,20 +49,31 @@ class MdxLiteRtVocalModelRunner(
         val inputTensor = OnnxTensor.createTensor(
             environment,
             FloatBuffer.wrap(input.data),
-            longArrayOf(1L, 4L, modelSpec.dimF.toLong(), modelSpec.dimT.toLong()),
+            longArrayOf(
+                1L,
+                4L,
+                modelSpec.dimF.toLong(),
+                modelSpec.dimT.toLong(),
+            ),
         )
 
         inputTensor.use { tensor ->
             session.run(mapOf(inputName to tensor)).use { result ->
                 val value = result[outputName].orElseThrow {
-                    IllegalStateException("9482 ONNX output '$outputName' is missing")
+                    IllegalStateException(
+                        "9482 ONNX output '" + outputName + "' is missing"
+                    )
                 }
+
                 val outputTensor = value as? OnnxTensor
                     ?: error("9482 ONNX output is not a tensor")
+
                 val output = outputTensor.floatBufferCopy()
                 require(output.size == stft.tensorSize()) {
-                    "Unexpected MDX output size: ${'$'}{output.size} != ${'$'}{stft.tensorSize()}"
+                    "Unexpected MDX output size: " +
+                        output.size + " != " + stft.tensorSize()
                 }
+
                 val vocalSpec = MdxStft.Spectrogram(output)
                 val (vocL, vocR) = stft.inverse(vocalSpec)
                 return MdxStft.StereoChunk(vocL, vocR)
@@ -73,10 +84,20 @@ class MdxLiteRtVocalModelRunner(
     private fun validateModelShape() {
         val info = session.inputInfo[inputName]
             ?: error("9482 ONNX input metadata is unavailable")
+
         val shape = info.info.shape
-        val expected = longArrayOf(1L, 4L, modelSpec.dimF.toLong(), modelSpec.dimT.toLong())
+        val expected = longArrayOf(
+            1L,
+            4L,
+            modelSpec.dimF.toLong(),
+            modelSpec.dimT.toLong(),
+        )
+
         require(shape.contentEquals(expected)) {
-            "Unexpected 9482 ONNX input shape: ${'$'}{shape.contentToString()} expected ${'$'}{expected.contentToString()}"
+            "Unexpected 9482 ONNX input shape: " +
+                shape.contentToString() +
+                " expected " +
+                expected.contentToString()
         }
     }
 
@@ -90,3 +111,4 @@ class MdxLiteRtVocalModelRunner(
     override fun close() {
         session.close()
     }
+}
