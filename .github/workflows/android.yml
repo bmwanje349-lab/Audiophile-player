@@ -35,7 +35,7 @@ jobs:
           set -euo pipefail
           MODEL_DIR="app/src/main/assets/models/mdx"
           MODEL_FILE="UVR_MDXNET_9482.onnx"
-          MODEL_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models/UVR_MDXNET_9482.onnx"
+          MODEL_URL="https://huggingface.co/seanghay/uvr_models/resolve/main/UVR_MDXNET_9482.onnx?download=true"
           MODEL_SHA256="f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184"
 
           mkdir -p "$MODEL_DIR"
