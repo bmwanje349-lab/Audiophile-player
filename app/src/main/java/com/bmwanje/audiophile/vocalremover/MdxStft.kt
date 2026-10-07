@@ -129,7 +129,7 @@ class MdxStft(private val spec: MdxModelSpec) {
 
     fun inverse(spectrogram: Spectrogram): StereoChunk {
         require(spectrogram.data.size == tensorSize) {
-            "Expected tensor size $\{tensorSize}, got $\{spectrogram.data.size}"
+            "Expected tensor size ${tensorSize}, got ${spectrogram.data.size}"
         }
 
         val left = inverseChannel(spectrogram.data, 0)
