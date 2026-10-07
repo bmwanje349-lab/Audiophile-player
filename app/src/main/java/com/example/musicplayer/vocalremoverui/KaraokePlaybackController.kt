@@ -513,7 +513,7 @@ class KaraokePlaybackController(
             }
 
             if (positionMs > 0L) {
-                extractor.seekTo(positionMs * 1000L, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                extractor.seekTo(positionMs * 1000L, MediaExtractor.SEEK_TO_NEXT_SYNC)
             }
 
             publish(State.BUFFERING, "Processing karaoke audio…")
