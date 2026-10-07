@@ -31,6 +31,21 @@ class LiveKaraokeActivity : AppCompatActivity() {
             "extra_live_karaoke_track_title"
         const val EXTRA_TRACK_POSITION_MS =
             "extra_live_karaoke_track_position_ms"
+
+        private const val BG =
+            0xFF0B0D10.toInt()
+        private const val SURFACE =
+            0xFF14171C.toInt()
+        private const val TEXT =
+            0xFFF5F7FA.toInt()
+        private const val TEXT_SECONDARY =
+            0xFFA7AFBA.toInt()
+        private const val MUTED =
+            0xFF737C88.toInt()
+        private const val BORDER =
+            0xFF272C33.toInt()
+        private const val ACCENT =
+            0xFF54B8FF.toInt()
     }
 
     private var service: LiveKaraokeService? = null
@@ -594,20 +609,4 @@ class LiveKaraokeActivity : AppCompatActivity() {
                 resources.displayMetrics.density
         ).toInt()
 
-    companion object {
-        private const val BG =
-            0xFF0B0D10.toInt()
-        private const val SURFACE =
-            0xFF14171C.toInt()
-        private const val TEXT =
-            0xFFF5F7FA.toInt()
-        private const val TEXT_SECONDARY =
-            0xFFA7AFBA.toInt()
-        private const val MUTED =
-            0xFF737C88.toInt()
-        private const val BORDER =
-            0xFF272C33.toInt()
-        private const val ACCENT =
-            0xFF54B8FF.toInt()
-    }
 }
