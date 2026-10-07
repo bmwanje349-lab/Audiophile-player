@@ -54,7 +54,7 @@ jobs:
           set -euo pipefail
           MODEL="app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx"
 
-          if git diff --quiet -- "$MODEL"; then
+          if [ -z "$(git status --porcelain -- "$MODEL")" ]; then
             echo "No model commit needed."
             exit 0
           fi
