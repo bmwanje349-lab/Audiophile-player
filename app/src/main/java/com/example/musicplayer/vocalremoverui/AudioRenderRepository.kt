@@ -55,44 +55,49 @@ class AudioRenderRepository(
                 val audioTrack = findAudioTrack(uri)
                 track = audioTrack
 
-                pipeline = pipelineFactory(audioTrack.sampleRate)
-                configurePipeline(pipeline)
-                pipeline.loadModel()
+                val localPipeline =
+                    pipelineFactory(audioTrack.sampleRate)
+                pipeline = localPipeline
+
+                configurePipeline(localPipeline)
+                localPipeline.loadModel()
 
                 val output =
                     createOutputFile(titleSuffix)
-                writer =
+                val wavWriter =
                     StreamingWavWriter(
                         file = output,
                         sampleRate = audioTrack.sampleRate,
                     )
+                writer = wavWriter
 
-                streaming =
-                    pipeline.startStreaming { block ->
-                        writer?.write(block)
+                val renderer =
+                    localPipeline.startStreaming { block ->
+                        wavWriter.write(block)
                     }
+                streaming = renderer
 
                 decodeTrack(
                     extractor = audioTrack.extractor,
                     inputFormat = audioTrack.format,
-                    processor = streaming,
+                    processor = renderer,
                     expectedDurationUs = audioTrack.durationUs,
                     onProgress = onProgress,
                 )
 
-                streaming.finish()
-                check(streaming.inputSamples() == writer.framesWritten) {
+                renderer.finish()
+                check(renderer.inputSamples() == wavWriter.framesWritten) {
                     "Input/output frame mismatch: " +
-                        streaming.inputSamples() +
+                        renderer.inputSamples() +
                         " input vs " +
-                        writer.framesWritten +
+                        wavWriter.framesWritten +
                         " output"
                 }
 
-                writer.finish()
+                wavWriter.finish()
                 writer = null
 
-                onMdxChunks(streaming.mdxInferenceCount())
+                onMdxChunks(renderer.mdxInferenceCount())
                 onProgress(1f)
                 onReady(Uri.fromFile(output))
             } catch (throwable: Throwable) {
