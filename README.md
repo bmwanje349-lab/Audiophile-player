@@ -1,6 +1,6 @@
 # Audiophile Player — Premium AI Vocal Remover (MDX-Net ONNX Runtime)
 
-This integration uses **ONNX Runtime Android** as the neural backend. LiteRT/TFLite is not part of the production path.
+This integration uses **ONNX Runtime Android** as the neural backend. LiteRT/TFLite is not part of the production execution path.
 
 ## Runtime architecture
 
@@ -19,13 +19,19 @@ Decoded stereo PCM
 
 - File: `UVR_MDXNET_9482.onnx`
 - Runtime: ONNX Runtime Android 1.30.0
-- Input/output contract: `float32 [1, 4, 2048, 256]`
+- Input/output contract: `float32 [batch, 4, 2048, 256]` with batch `1` at runtime
 - FFT: 4096
 - Frequency bins: 2048
 - Time frames: 256
 - SHA-256: `f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184`
 
-The same hash is used by the build pipeline and runtime installer. The APK build downloads the exact pinned ONNX file into `app/src/main/assets/models/mdx/`, verifies the checksum, and bundles it. At runtime the app copies the bundled asset into app-private storage and verifies it again. If an asset is unavailable, the manager downloads the same exact file and verifies the same SHA before installation.
+The production ONNX file is vendored at `app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx` and verified by SHA-256 before use. The Android app never downloads model bytes from the network. The model is copied from APK assets into app-private storage on first use and checksum-verified again before the ONNX Runtime session is created.
+
+A one-time GitHub Actions vendor workflow exists only to bootstrap the exact pinned ONNX file into the repository if the asset is missing. The normal Android build never fetches the model from the network.
+
+### Important format distinction
+
+The supplied `UVR_MDXNET_9482.fp16acc.tflite` file is a **TFLite** model. It is not loaded by this ONNX Runtime implementation. It was inspected as a 9482 MDX-derived model with NCHW I/O metadata, but substituting it would require switching the production execution engine to LiteRT/TFLite, which is intentionally not done here.
 
 ## Android dependencies
 
@@ -38,7 +44,7 @@ implementation("com.github.wendykierp:JTransforms:3.1")
 
 No LiteRT/TFLite dependency is used.
 
-The host performs the STFT/iSTFT because the MDX model contract is spectrogram-based. The ONNX runner validates the model metadata at startup and rejects a wrong input/output shape or non-float tensor rather than allowing a later crash during inference.
+The host performs the STFT/iSTFT because the MDX model contract is spectrogram-based. The ONNX runner validates model metadata at startup and accepts either a fixed batch dimension of 1 or a symbolic/dynamic batch dimension, while requiring dimensions `[4,2048,256]` and float32.
 
 ## Existing premium DSP
 
@@ -51,21 +57,22 @@ The pipeline applies the neural vocal estimate to the existing premium DSP, wher
 The repaired pipeline also:
 
 - creates a replacement ONNX session before closing the previous session;
-- validates the exact model tensor contract before processing;
+- validates the model tensor contract before processing, including dynamic batch metadata;
 - preserves finite ONNX outputs instead of applying an arbitrary hard clamp;
 - uses the decoded track's actual sample rate and resamples internally to/from the model's 44.1 kHz rate;
-- avoids relying on a network request when the verified model is already bundled in the APK.
+- refuses to start when the vendored model asset is absent or has the wrong checksum;
+- contains no runtime model-download fallback.
 
 ## Verification
 
-GitHub Actions now performs, in order:
+GitHub Actions performs the following model/build gates:
 
-1. Download the exact ONNX model.
-2. Verify its SHA-256.
+1. Verify that the ONNX binary is present in the repository.
+2. Verify the exact SHA-256.
 3. Run a real ONNX Runtime CPU smoke test against the actual model binary.
-4. Verify input/output tensor shapes and float32 types.
+4. Verify input/output rank, dimensions and float32 types.
 5. Run one real inference and reject non-finite or implausibly large output.
 6. Build the Android debug APK.
 7. Upload the APK and build log.
 
-A successful CI run is therefore the acceptance gate for both the real model binary and the Android build.
+A successful Android build therefore uses the exact model bytes that are checked into the repository, with no model download during the build.

@@ -7,8 +7,41 @@ on:
     branches: ["main", "master"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  check-model:
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.model.outputs.available }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify vendored exact MDX ONNX model
+        id: model
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODEL="app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx"
+          SHA="f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184"
+
+          if [ ! -f "$MODEL" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "MDX model is not vendored yet. The model-vendor workflow will bootstrap it on main."
+            exit 0
+          fi
+
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          test "$(stat -c%s "$MODEL")" -gt 1000000
+          echo "$SHA  $MODEL" | sha256sum -c -
+          sha256sum "$MODEL"
+          ls -lh "$MODEL"
+
   build:
+    needs: check-model
+    if: needs.check-model.outputs.available == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -30,25 +63,6 @@ jobs:
         run: |
           sdkmanager             "platforms;android-36"             "build-tools;35.0.0"             "cmake;3.22.1"             "ndk;27.3.13750724"
 
-      - name: Fetch and verify exact MDX ONNX model
-        run: |
-          set -euo pipefail
-          MODEL_DIR="app/src/main/assets/models/mdx"
-          MODEL_FILE="UVR_MDXNET_9482.onnx"
-          MODEL_URL="https://huggingface.co/seanghay/uvr_models/resolve/main/UVR_MDXNET_9482.onnx?download=true"
-          MODEL_SHA256="f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184"
-
-          mkdir -p "$MODEL_DIR"
-          curl --fail --location --retry 5 --retry-delay 3             -A "AudiophilePlayer/MDX-ONNX-build"             -o "$MODEL_DIR/$MODEL_FILE.part"             "$MODEL_URL"
-
-          echo "$MODEL_SHA256  $MODEL_DIR/$MODEL_FILE.part" | sha256sum -c -
-          test "$(stat -c%s "$MODEL_DIR/$MODEL_FILE.part")" -gt 1000000
-          mv "$MODEL_DIR/$MODEL_FILE.part" "$MODEL_DIR/$MODEL_FILE"
-
-          echo "Verified model:"
-          sha256sum "$MODEL_DIR/$MODEL_FILE"
-          ls -lh "$MODEL_DIR/$MODEL_FILE"
-
       - name: Real ONNX model contract smoke test
         run: |
           python3 -m pip install --disable-pip-version-check --no-cache-dir onnxruntime numpy
@@ -66,9 +80,9 @@ jobs:
           echo "--- app folder ---"
           ls -la app || echo "NO app FOLDER"
           echo "--- model asset ---"
-          ls -lh app/src/main/assets/models/mdx || echo "NO MDX MODEL ASSET"
+          ls -lh app/src/main/assets/models/mdx
           echo "--- app/build.gradle.kts (first 16 lines) ---"
-          head -16 app/build.gradle.kts || echo "NO app/build.gradle.kts"
+          head -16 app/build.gradle.kts
           echo "--- settings ---"
           cat settings.gradle.kts
           echo "--- all build files ---"
@@ -86,7 +100,7 @@ jobs:
           status=$?
           cat build.log
           echo "=================== ERROR SUMMARY ==================="
-          grep -n -E             "^e: |What went wrong|error:|CMake Error|Execution failed|> .*(not found|Unresolved|Could not)"             -A4             build.log | head -80 || true
+          grep -n -E             "^e: |What went wrong|error:|CMake Error|Execution failed|> .*(not found|Unresolved|Could not)"             -A4 build.log | head -80 || true
           echo "======================================================"
           exit "$status"
 
