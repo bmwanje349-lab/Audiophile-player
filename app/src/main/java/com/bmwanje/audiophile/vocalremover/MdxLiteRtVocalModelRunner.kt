@@ -24,6 +24,7 @@ class MdxOnnxVocalModelRunner(
     private val session: OrtSession
     private val inputName: String
     private val outputName: String
+    private var inferenceCounter = 0L
 
     init {
         val options = OrtSession.SessionOptions().apply {
@@ -44,7 +45,11 @@ class MdxOnnxVocalModelRunner(
         left: FloatArray,
         right: FloatArray,
     ): MdxStft.StereoChunk {
+        require(left.size == stft.chunkSizeSamples())
+        require(right.size == stft.chunkSizeSamples())
+
         val input = stft.forward(left, right)
+        inferenceCounter += 1L
         val shape = longArrayOf(1L, 4L, modelSpec.dimF.toLong(), modelSpec.dimT.toLong())
 
         OnnxTensor.createTensor(environment, FloatBuffer.wrap(input.data), shape).use { tensor ->
@@ -68,6 +73,9 @@ class MdxOnnxVocalModelRunner(
             }
         }
     }
+
+    /** Number of real ONNX Runtime inference calls completed by this runner. */
+    fun inferenceCount(): Long = synchronized(this) { inferenceCounter }
 
     private fun validateTensor(role: String, info: ai.onnxruntime.ValueInfo?) {
         val tensorInfo = info as? TensorInfo
