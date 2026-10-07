@@ -248,16 +248,11 @@ class LiveKaraokeEngine(
 
             queue.cancel()
             runCatching { audioTrack?.pause() }
-            runCatching { audioTrack?.flush() }
             runCatching { audioTrack?.stop() }
-            runCatching { audioTrack?.release() }
-            audioTrack = null
-
-            runCatching { pipeline?.close() }
-            pipeline = null
-
             executor?.shutdownNow()
-            executor = null
+
+            // The inference thread owns the pipeline lifetime and closes it
+            // from its finally block after the current model call unwinds.
         }
 
         private fun produce() {
@@ -424,11 +419,7 @@ class LiveKaraokeEngine(
                     queue.finish()
                 }
             } catch (throwable: Throwable) {
-                if (!cancelled.get() && isCurrent(id)) {
-                    producerFinished = true
-                    queue.cancel()
-                    listener.onError(throwable)
-                }
+                fail(throwable)
             } finally {
                 runCatching { decoder?.stop() }
                 runCatching { decoder?.release() }
@@ -436,6 +427,7 @@ class LiveKaraokeEngine(
                 runCatching { streaming?.close() }
                 runCatching { pipeline?.close() }
                 pipeline = null
+                releaseAudioTrack()
             }
         }
 
@@ -526,10 +518,34 @@ class LiveKaraokeEngine(
                     listener.onCompleted()
                 }
             } catch (throwable: Throwable) {
-                if (!cancelled.get() && isCurrent(id)) {
-                    listener.onError(throwable)
-                }
+                fail(throwable)
+            } finally {
+                releaseAudioTrack()
             }
+        }
+
+        private fun fail(throwable: Throwable) {
+            if (!cancelled.compareAndSet(false, true)) return
+            producerFinished = true
+            queue.cancel()
+            executor?.shutdownNow()
+            if (isCurrent(id)) {
+                listener.onError(throwable)
+            }
+        }
+
+        private fun releaseAudioTrack() {
+            val track =
+                synchronized(this) {
+                    val current = audioTrack ?: return
+                    audioTrack = null
+                    current
+                }
+
+            runCatching { track.pause() }
+            runCatching { track.flush() }
+            runCatching { track.stop() }
+            runCatching { track.release() }
         }
 
         private fun playbackPositionMs(): Long =
