@@ -766,13 +766,13 @@ progress =
             else -> "$value%"
         }
 
+    /**
+     * Density helper safe during initial UI construction.
+     * The first toolbar measurements happen before lateinit views such as
+     * status are created, so dp() must not depend on any view property.
+     */
     private fun dp(v: Int): Int =
-        (
-            v *
-                status.context.resources
-                    .displayMetrics
-                    .density
-            ).toInt()
+        (v * android.content.res.Resources.getSystem().displayMetrics.density).toInt()
 
     private fun marginTop(v: Int): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(
