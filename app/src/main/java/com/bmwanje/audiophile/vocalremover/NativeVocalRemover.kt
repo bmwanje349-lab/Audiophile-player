@@ -19,13 +19,18 @@ class NativeVocalRemover(sampleRate: Int) : AutoCloseable {
         vocalR: FloatArray,
         outL: FloatArray,
         outR: FloatArray,
+        count: Int = mixL.size,
     ) {
+        require(count in 1..mixL.size)
         require(mixL.size == mixR.size && vocalL.size == mixL.size && vocalR.size == mixL.size)
-        require(outL.size >= mixL.size && outR.size >= mixL.size)
+        require(outL.size >= count && outR.size >= count)
         nativeProcess(
-            requireHandle(), mixL, mixR, vocalL, vocalR, outL, outR, mixL.size,
+            requireHandle(), mixL, mixR, vocalL, vocalR, outL, outR, count,
         )
     }
+
+    fun setNeuralStemMode(enabled: Boolean) =
+        nativeSetNeuralMode(requireHandle(), enabled)
 
     fun reset() = nativeReset(requireHandle())
     fun latencySamples(): Int = nativeLatency(requireHandle())
