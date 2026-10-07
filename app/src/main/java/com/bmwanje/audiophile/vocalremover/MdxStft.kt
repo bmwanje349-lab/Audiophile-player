@@ -144,7 +144,7 @@ class MdxStft(private val spec: MdxModelSpec) {
         /*
          * UVR concatenates [dimF bins] with zeros up to n_fft/2+1 bins, then
          * performs a centered iSTFT. Build that full complex spectrum explicitly
-         * for JTransforms' realInverseFull().
+         * for JTransforms' complexInverse().
          */
         val accum = FloatArray(chunkSize + 2 * centerPad)
         val envelope = FloatArray(chunkSize + 2 * centerPad)
@@ -178,11 +178,14 @@ class MdxStft(private val spec: MdxModelSpec) {
                 frame[dst + 1] = -frame[src + 1]
             }
 
-            fft.realInverseFull(frame, true)
+            // We deliberately construct a full complex spectrum above, so use
+            // JTransforms' complex inverse. realInverseFull() expects the compact
+            // real-FFT layout and would interpret these bins incorrectly.
+            fft.complexInverse(frame, true)
 
             val start = t * hop
             for (i in 0 until n) {
-                val x = frame[i] * window[i]
+                val x = frame[2 * i] * window[i]
                 accum[start + i] += x
                 envelope[start + i] += windowSq[i]
             }
