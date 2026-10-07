@@ -53,10 +53,16 @@ android {
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
+
+    androidResources {
+        // Keep the bundled MDX model uncompressed so it can be copied to a file
+        // and opened by LiteRT without an additional decompression step.
+        noCompress += "tflite"
+    }
 }
 
 dependencies {
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
+    implementation("com.google.ai.edge.litert:litert:2.2.0")
     implementation("com.github.wendykierp:JTransforms:3.1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-ktx:1.10.1")
