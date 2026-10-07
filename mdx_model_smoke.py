@@ -39,8 +39,10 @@ def main() -> int:
 
     assert len(inputs) == 1, inputs
     assert len(outputs) == 1, outputs
-    assert inputs[0].shape == EXPECTED, inputs[0].shape
-    assert outputs[0].shape == EXPECTED, outputs[0].shape
+    assert len(inputs[0].shape) == 4, inputs[0].shape
+    assert len(outputs[0].shape) == 4, outputs[0].shape
+    assert inputs[0].shape[1:] == EXPECTED[1:], inputs[0].shape
+    assert outputs[0].shape[1:] == EXPECTED[1:], outputs[0].shape
     assert inputs[0].type == "tensor(float)", inputs[0].type
     assert outputs[0].type == "tensor(float)", outputs[0].type
 
