@@ -74,9 +74,15 @@ class MdxOnnxVocalModelRunner(
             ?: error("9482 ONNX " + role + " is not a tensor")
         val expectedShape = longArrayOf(1L, 4L, modelSpec.dimF.toLong(), modelSpec.dimT.toLong())
         val actualShape = tensorInfo.getShape()
-        require(actualShape.contentEquals(expectedShape)) {
+        require(
+            actualShape.size == expectedShape.size &&
+                (actualShape[0] == -1L || actualShape[0] == 1L) &&
+                actualShape.copyOfRange(1, actualShape.size)
+                    .contentEquals(expectedShape.copyOfRange(1, expectedShape.size))
+        ) {
             "Unexpected 9482 ONNX " + role + " shape: " +
-                actualShape.contentToString() + " expected " + expectedShape.contentToString()
+                actualShape.contentToString() +
+                " expected [batch,4,2048,256]"
         }
         require(tensorInfo.type == OnnxJavaType.FLOAT) {
             "9482 ONNX " + role + " must be float32, got " + tensorInfo.type
