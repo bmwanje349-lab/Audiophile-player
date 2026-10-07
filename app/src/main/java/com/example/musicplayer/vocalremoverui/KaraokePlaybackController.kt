@@ -1,10 +1,3 @@
-private data class RenderBlock(
-    val generation: Long,
-    val audio: VocalSeparatorCore.Stereo,
-) {
-    val size: Int get() = audio.size
-}
-
 package com.example.musicplayer.vocalremoverui
 
 import android.media.AudioAttributes
