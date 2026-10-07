@@ -122,7 +122,7 @@ object MdxModelManager {
             connection.connect()
             var code = connection.responseCode
 
-            if (code == HttpURLConnection.HTTP_REQUESTED_RANGE_NOT_SATISFIABLE && append) {
+            if (code == 416 && append) {
                 connection.disconnect()
                 temp.delete()
                 existing = 0L
