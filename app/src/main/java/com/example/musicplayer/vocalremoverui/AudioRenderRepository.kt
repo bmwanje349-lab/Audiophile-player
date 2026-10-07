@@ -6,7 +6,6 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
-import com.bmwanje.audiophile.vocalremover.ModelManager
 import com.bmwanje.audiophile.vocalremover.StreamingVocalRemover
 import com.bmwanje.audiophile.vocalremover.VocalRemoverPipeline
 import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
@@ -58,9 +57,6 @@ class AudioRenderRepository(
 
                 pipeline = pipelineFactory(track.sampleRate)
                 configurePipeline(pipeline)
-                check(ModelManager.isInstalled(appContext)) {
-                    "Bundled MDX model is not prepared"
-                }
                 pipeline.loadModel()
 
                 val output =
