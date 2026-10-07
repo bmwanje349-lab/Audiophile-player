@@ -25,6 +25,11 @@ class VocalRemoverActivity :
 
     private var processedTrackTitle = "Instrumental copy"
 
+    companion object {
+        const val EXTRA_TRACK_URI = "extra_track_uri"
+        const val EXTRA_TRACK_TITLE = "extra_track_title"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -41,24 +46,22 @@ class VocalRemoverActivity :
         )
 
         setContentView(root)
-
-        connectController()
     }
 
     override fun currentTrack():
         VocalRemoverUi.TrackSource? {
 
-        val item =
-            controller?.currentMediaItem
+        val uriString =
+            intent.getStringExtra(EXTRA_TRACK_URI)
                 ?: return null
 
         val uri =
-            item.localConfiguration?.uri
+            runCatching { Uri.parse(uriString) }
+                .getOrNull()
                 ?: return null
 
         val title =
-            item.mediaMetadata.title
-                ?.toString()
+            intent.getStringExtra(EXTRA_TRACK_TITLE)
                 ?.takeIf { it.isNotBlank() }
                 ?: "Current track"
 
@@ -122,27 +125,62 @@ class VocalRemoverActivity :
     override fun playProcessedUri(
         uri: Uri,
     ) {
-        val player =
-            controller
-                ?: throw IllegalStateException(
-                    "Media controller is not connected"
-                )
+        fun playWith(player: MediaController) {
+            val mediaItem =
+                MediaItem.Builder()
+                    .setUri(uri)
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(processedTrackTitle)
+                            .setArtist("Audiophile Player")
+                            .setAlbumTitle("AI Vocal Remover")
+                            .build()
+                    )
+                    .build()
 
-        val mediaItem =
-            MediaItem.Builder()
-                .setUri(uri)
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(processedTrackTitle)
-                        .setArtist("Audiophile Player")
-                        .setAlbumTitle("AI Vocal Remover")
-                        .build()
-                )
-                .build()
+            player.setMediaItem(mediaItem)
+            player.prepare()
+            player.play()
+        }
 
-        player.setMediaItem(mediaItem)
-        player.prepare()
-        player.play()
+        controller?.let {
+            runCatching { playWith(it) }
+            return
+        }
+
+        val future =
+            runCatching {
+                MediaController.Builder(
+                    this,
+                    SessionToken(
+                        this,
+                        ComponentName(
+                            this,
+                            PlaybackService::class.java,
+                        ),
+                    ),
+                ).buildAsync()
+            }.getOrNull()
+                ?: return
+
+        controllerFuture = future
+
+        future.addListener(
+            {
+                runCatching {
+                    val connected = future.get()
+
+                    if (controllerFuture !== future) {
+                        connected.release()
+                        return@runCatching
+                    }
+
+                    controller = connected
+                    playWith(connected)
+                }
+            },
+            ContextCompat.getMainExecutor(this),
+        )
     }
 
     override fun openBack() {
@@ -168,50 +206,6 @@ class VocalRemoverActivity :
         super.onDestroy()
     }
 
-    private fun connectController() {
-        if (
-            controller != null ||
-            controllerFuture != null
-        ) {
-            return
-        }
 
-        val token =
-            SessionToken(
-                this,
-                ComponentName(
-                    this,
-                    PlaybackService::class.java,
-                ),
-            )
 
-        val future =
-            MediaController.Builder(
-                this,
-                token,
-            ).buildAsync()
-
-        controllerFuture = future
-
-        future.addListener(
-            {
-                runCatching {
-
-                    val connected =
-                        future.get()
-
-                    if (
-                        controllerFuture !== future
-                    ) {
-                        connected.release()
-                        return@runCatching
-                    }
-
-                    controller =
-                        connected
-                }
-            },
-            ContextCompat.getMainExecutor(this),
-        )
-    }
 }
