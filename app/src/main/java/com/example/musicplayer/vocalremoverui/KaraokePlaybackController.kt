@@ -19,6 +19,13 @@ import java.util.concurrent.Future
 import kotlin.math.max
 import kotlin.math.min
 
+private data class RenderBlock(
+    val generation: Long,
+    val audio: VocalSeparatorCore.Stereo,
+) {
+    val size: Int get() = audio.size
+}
+
 class KaraokePlaybackController(
     private val onSnapshot: (Snapshot) -> Unit,
 ) : AutoCloseable {
