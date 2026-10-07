@@ -629,6 +629,11 @@ private class BlockQueue(
         frames >= n
     }
 
+    fun finish() = synchronized(lock) {
+        finished = true
+        lock.notifyAll()
+    }
+
     fun finishedAndEmpty(): Boolean = synchronized(lock) { finished && blocks.isEmpty() }
     fun frames(): Int = synchronized(lock) { frames }
 }
