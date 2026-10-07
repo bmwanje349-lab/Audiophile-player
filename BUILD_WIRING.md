@@ -55,16 +55,19 @@ Decoded stereo PCM
 44.1 kHz model-rate conversion
       |
       v
-Periodic-Hann STFT
+UVR-compatible periodic-Hann STFT
       |
       v
 ONNX Runtime [1,4,2048,256]
       |
       v
-inverse STFT
+zero-pad frequency bins + inverse STFT
       |
       v
-overlap/crossfade reconstruction
+trim n_fft/2 edge context per side
+      |
+      v
+apply model compensation 1.035
       |
       v
 source-rate restoration
