@@ -10,7 +10,6 @@ import com.bmwanje.audiophile.vocalremover.StreamingVocalRemover
 import com.bmwanje.audiophile.vocalremover.VocalRemoverPipeline
 import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
 import java.io.File
-import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -50,7 +49,6 @@ class AudioRenderRepository(
             var pipeline: VocalRemoverPipeline? = null
             var streaming: StreamingVocalRemover? = null
             var writer: StreamingWavWriter? = null
-            var success = false
 
             try {
                 val track = findAudioTrack(uri)
@@ -96,7 +94,6 @@ class AudioRenderRepository(
                 onMdxChunks(streaming.mdxInferenceCount())
                 onProgress(1f)
                 onReady(Uri.fromFile(output))
-                success = true
             } catch (throwable: Throwable) {
                 onError(throwable)
             } finally {
@@ -113,6 +110,7 @@ class AudioRenderRepository(
 
     private fun findAudioTrack(uri: Uri): AudioTrackResources {
         val extractor = MediaExtractor()
+
         try {
             extractor.setDataSource(appContext, uri, null)
 
@@ -138,35 +136,10 @@ class AudioRenderRepository(
 
             extractor.selectTrack(audioTrack)
 
-            val mime =
-                format.getString(MediaFormat.KEY_MIME)
-                    ?: error("Audio MIME type is missing")
-
-            val decoder =
-                MediaCodec.createDecoderByType(mime)
-
-            try {
-                decoder.configure(
-                    format,
-                    null,
-                    null,
-                    0,
-                )
-                decoder.start()
-
-                val retainedExtractor = extractor
-                val retainedFormat = format
-
-                return AudioTrackResources(
-                    extractor = retainedExtractor,
-                    decoder = decoder,
-                    format = retainedFormat,
-                )
-            } catch (throwable: Throwable) {
-                runCatching { decoder.stop() }
-                decoder.release()
-                throw throwable
-            }
+            return AudioTrackResources(
+                extractor = extractor,
+                format = format,
+            )
         } catch (throwable: Throwable) {
             extractor.release()
             throw throwable
@@ -175,12 +148,26 @@ class AudioRenderRepository(
 
     private fun decodeTrack(
         extractor: MediaExtractor,
-        decoder: MediaCodec,
         inputFormat: MediaFormat,
         processor: StreamingVocalRemover,
         expectedDurationUs: Long?,
         onProgress: (Float) -> Unit,
     ) {
+        val mime =
+            inputFormat.getString(MediaFormat.KEY_MIME)
+                ?: error("Audio MIME type is missing")
+
+        val decoder =
+            MediaCodec.createDecoderByType(mime)
+
+        decoder.configure(
+            inputFormat,
+            null,
+            null,
+            0,
+        )
+        decoder.start()
+
         val bufferInfo = MediaCodec.BufferInfo()
 
         var sampleRate =
