@@ -1,6 +1,8 @@
 package com.example.musicplayer
 import com.example.musicplayer.vocalremoverui.VocalRemoverActivity
 import com.example.musicplayer.vocalremoverui.VocalRemoverLaunchCard
+import com.example.musicplayer.livekaraoke.LiveKaraokeActivity
+import com.example.musicplayer.livekaraoke.LiveKaraokeLaunchCard
 import android.Manifest
 import android.content.ComponentName
 import android.content.Context
@@ -547,6 +549,12 @@ class MainActivity : AppCompatActivity() {
         }
     )
 
+    root.addView(
+        LiveKaraokeLaunchCard.build(root) {
+            launchLiveKaraoke()
+        }
+    )
+
     root.addView(sectionLabel("Signal chain"))
 
     root.addView(
@@ -1006,6 +1014,38 @@ class MainActivity : AppCompatActivity() {
                 ?.let { title ->
                     intent.putExtra(VocalRemoverActivity.EXTRA_TRACK_TITLE, title)
                 }
+        }
+
+        startActivity(intent)
+    }
+
+    private fun launchLiveKaraoke() {
+        val intent =
+            Intent(this, LiveKaraokeActivity::class.java)
+
+        controller?.currentMediaItem?.let { item ->
+            item.localConfiguration?.uri?.toString()?.let { uri ->
+                intent.putExtra(
+                    LiveKaraokeActivity.EXTRA_TRACK_URI,
+                    uri,
+                )
+                controller?.pause()
+            }
+
+            item.mediaMetadata.title
+                ?.toString()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { title ->
+                    intent.putExtra(
+                        LiveKaraokeActivity.EXTRA_TRACK_TITLE,
+                        title,
+                    )
+                }
+
+            intent.putExtra(
+                LiveKaraokeActivity.EXTRA_TRACK_POSITION_MS,
+                controller?.currentPosition ?: 0L,
+            )
         }
 
         startActivity(intent)

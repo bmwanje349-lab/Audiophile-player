@@ -22,6 +22,9 @@
             android:name=".vocalremoverui.VocalRemoverActivity"
             android:exported="false" />
         <activity
+            android:name=".livekaraoke.LiveKaraokeActivity"
+            android:exported="false" />
+        <activity
             android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
@@ -29,6 +32,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".LiveKaraokeService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <service
             android:name=".PlaybackService"
