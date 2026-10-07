@@ -16,8 +16,6 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import com.bmwanje.audiophile.vocalremover.ModelManager
-import com.bmwanje.audiophile.vocalremover.VocalRemoverPipeline
-import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -39,14 +37,16 @@ class VocalRemoverUi(
     interface Host {
         fun currentTrack(): TrackSource?
 
-        fun decodeCurrentTrackToStereoPcm(
-            onReady: (PcmTrack) -> Unit,
-            onError: (Throwable) -> Unit,
-        )
-
-        fun encodeProcessedTrack(
-            pcm: PcmTrack,
-            titleSuffix: String,
+        fun renderCurrentTrack(
+            depth: Float,
+            focus: Float,
+            transientProtection: Float,
+            dryWet: Float,
+            stemGainDb: Float,
+            outputGainDb: Float,
+            ceilingDb: Float,
+            onProgress: (Float) -> Unit,
+            onMdxChunks: (Long) -> Unit,
             onReady: (Uri) -> Unit,
             onError: (Throwable) -> Unit,
         )
@@ -61,11 +61,6 @@ class VocalRemoverUi(
         val uri: Uri,
     )
 
-    data class PcmTrack(
-        val sampleRate: Int,
-        val stereo: VocalSeparatorCore.Stereo,
-    )
-
     private val main = Handler(Looper.getMainLooper())
 
     private val executor: ExecutorService =
@@ -76,8 +71,6 @@ class VocalRemoverUi(
         }
 
     private var activeJob: Future<*>? = null
-    private var pipeline: VocalRemoverPipeline? = null
-
     private val bg = Color.rgb(10, 12, 15)
     private val surface = Color.rgb(23, 26, 31)
     private val textColor = Color.rgb(242, 245, 247)
@@ -368,9 +361,6 @@ class VocalRemoverUi(
         activeJob?.cancel(true)
         activeJob = null
 
-        pipeline?.close()
-        pipeline = null
-
         executor.shutdownNow()
     }
 
@@ -410,7 +400,7 @@ class VocalRemoverUi(
                             progressText.text =
                                 String.format(
                                     Locale.US,
-                                    "Model download: %.1f%%",
+                                    "Model preparation: %.1f%%",
                                     percentage / 10f
                                 )
                         }
@@ -456,148 +446,79 @@ class VocalRemoverUi(
 
         action.isEnabled = false
         modelButton.isEnabled = false
-        status.text = "Preparing vocal removal…"
+        progress.visibility = View.VISIBLE
+        progress.progress = 0
+        progressText.text = "Waiting for the first MDX-Net chunk…"
+        status.text = "Starting bounded streaming render…"
 
         activeJob?.cancel(true)
 
-        activeJob =
-            executor.submit {
-                try {
-                    main.post {
-                        status.text = "Decoding current track…"
-                    }
+        /*
+         * The actual render now lives entirely in AudioRenderRepository:
+         * MediaCodec -> bounded PCM blocks -> MDX-Net fixed chunks ->
+         * bounded native DSP -> streaming WAV writer.
+         */
+        host.renderCurrentTrack(
+            depth = depth,
+            focus = focus,
+            transientProtection = transientProtection,
+            dryWet = dryWet,
+            stemGainDb = stemGainDb,
+            outputGainDb = outputGainDb,
+            ceilingDb = ceilingDb,
+            onProgress = { fraction ->
+                main.post {
+                    val percentage =
+                        (fraction * 1000f)
+                            .toInt()
+                            .coerceIn(0, 1000)
 
-                    host.decodeCurrentTrackToStereoPcm(
-                        onReady = { pcm ->
+                    progress.progress = percentage
+                    progressText.text =
+                        String.format(
+                            Locale.US,
+                            "Audio processing: %.1f%%",
+                            percentage / 10f,
+                        )
 
-                            activeJob =
-                                executor.submit {
-                                    var localPipeline:
-                                        VocalRemoverPipeline? = null
-
-                                    try {
-                                        localPipeline =
-                                            VocalRemoverPipeline(
-                                                action.context,
-                                                pcm.sampleRate
-                                            )
-
-                                        localPipeline.setDepth(depth)
-                                        localPipeline.setFocus(focus)
-                                        localPipeline.setTransientProtection(
-                                            transientProtection
-                                        )
-                                        localPipeline.setDryWet(dryWet)
-                                        localPipeline.setStemGainDb(
-                                            stemGainDb
-                                        )
-                                        localPipeline.setOutputGainDb(
-                                            outputGainDb
-                                        )
-                                        localPipeline.setCeilingDb(
-                                            ceilingDb
-                                        )
-
-                                        localPipeline.loadModel()
-
-                                        pipeline?.close()
-                                        pipeline = localPipeline
-
-                                        main.post {
-                                            status.text =
-                                                "Running MDX-Net + premium post-processing…"
-                                        }
-
-                                        val output =
-                                            localPipeline.separateAndRemove(
-                                                pcm.stereo
-                                            )
-
-                                        main.post {
-                                            status.text =
-                                                "Encoding instrumental copy…"
-                                        }
-
-                                        host.encodeProcessedTrack(
-                                            PcmTrack(
-                                                sampleRate = pcm.sampleRate,
-                                                stereo = output
-                                            ),
-                                            " — Instrumental",
-                                            onReady = { uri ->
-                                                main.post {
-                                                    status.text =
-                                                        "Instrumental copy ready"
-
-                                                    action.isEnabled = true
-                                                    modelButton.isEnabled =
-                                                        true
-
-                                                    host.playProcessedUri(uri)
-                                                }
-                                            },
-                                            onError = { error ->
-                                                main.post {
-                                                    status.text =
-                                                        "Encoding failed: " +
-                                                            (
-                                                                error.message
-                                                                    ?: "unknown error"
-                                                            )
-
-                                                    action.isEnabled = true
-                                                    modelButton.isEnabled =
-                                                        true
-                                                }
-                                            }
-                                        )
-
-                                        localPipeline = null
-                                    } catch (throwable: Throwable) {
-                                        localPipeline?.close()
-
-                                        main.post {
-                                            status.text =
-                                                "Vocal removal failed: " +
-                                                    (
-                                                        throwable.message
-                                                            ?: "unknown error"
-                                                    )
-
-                                            action.isEnabled = true
-                                            modelButton.isEnabled = true
-                                        }
-                                    }
-                                }
-                        },
-                        onError = { error ->
-                            main.post {
-                                status.text =
-                                    "Decode failed: " +
-                                        (
-                                            error.message
-                                                ?: "unknown error"
-                                        )
-
-                                action.isEnabled = true
-                                modelButton.isEnabled = true
-                            }
-                        }
-                    )
-                } catch (throwable: Throwable) {
-                    main.post {
-                        status.text =
-                            "Vocal remover unavailable: " +
-                                (
-                                    throwable.message
-                                        ?: "unknown error"
-                                )
-
-                        action.isEnabled = true
-                        modelButton.isEnabled = true
-                    }
+                    status.text =
+                        "Streaming decode + MDX-Net + premium post-processing…"
                 }
-            }
+            },
+            onMdxChunks = { count ->
+                main.post {
+                    progress.progress = 1000
+                    progressText.text =
+                        "MDX-Net ONNX chunks executed: " + count
+                    status.text =
+                        "Instrumental render complete — MDX-Net received " +
+                            count +
+                            " fixed-size chunks."
+                }
+            },
+            onReady = { uri ->
+                main.post {
+                    progress.visibility = View.GONE
+                    status.text = "Instrumental copy ready"
+                    action.isEnabled = true
+                    modelButton.isEnabled = true
+                    host.playProcessedUri(uri)
+                }
+            },
+            onError = { error ->
+                main.post {
+                    progress.visibility = View.GONE
+                    status.text =
+                        "Vocal removal failed: " +
+                            (
+                                error.message
+                                    ?: "unknown error"
+                            )
+                    action.isEnabled = true
+                    modelButton.isEnabled = true
+                }
+            },
+        )
     }
 
     private fun updateTrackText(titleOverride: String? = null) {
