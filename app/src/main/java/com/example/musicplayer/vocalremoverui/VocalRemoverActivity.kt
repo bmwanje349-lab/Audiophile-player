@@ -128,6 +128,34 @@ class VocalRemoverActivity :
         )
     }
 
+    override fun openKaraoke(
+        depth: Float,
+        focus: Float,
+        transientProtection: Float,
+        dryWet: Float,
+        stemGainDb: Float,
+        outputGainDb: Float,
+        ceilingDb: Float,
+    ) {
+        val source = currentTrack() ?: return
+        startActivity(
+            android.content.Intent(
+                this,
+                KaraokeRemoverActivity::class.java,
+            ).apply {
+                putExtra(KaraokeRemoverActivity.EXTRA_URI, source.uri.toString())
+                putExtra(KaraokeRemoverActivity.EXTRA_TITLE, source.title)
+                putExtra(KaraokeRemoverActivity.EXTRA_DEPTH, depth)
+                putExtra(KaraokeRemoverActivity.EXTRA_FOCUS, focus)
+                putExtra(KaraokeRemoverActivity.EXTRA_TRANSIENT, transientProtection)
+                putExtra(KaraokeRemoverActivity.EXTRA_DRY_WET, dryWet)
+                putExtra(KaraokeRemoverActivity.EXTRA_STEM_GAIN, stemGainDb)
+                putExtra(KaraokeRemoverActivity.EXTRA_OUTPUT_GAIN, outputGainDb)
+                putExtra(KaraokeRemoverActivity.EXTRA_CEILING, ceilingDb)
+            }
+        )
+    }
+
     override fun playProcessedUri(
         uri: Uri,
     ) {
