@@ -445,6 +445,12 @@ class KaraokePlaybackController(
     private fun isCurrent(localGeneration: Long): Boolean =
         !closed && localGeneration == generation
 
+    private fun MediaFormat.getIntegerSafe(key: String): Int? =
+        runCatching { getInteger(key) }.getOrNull()
+
+    private fun MediaFormat.getLongSafe(key: String): Long? =
+        runCatching { getLong(key) }.getOrNull()
+
     private fun publish(state: State, message: String?) {
         onSnapshot(
             Snapshot(
@@ -507,20 +513,21 @@ class KaraokePlaybackController(
             pipeline?.close()
             pipeline = p
 
-            streaming = p.startStreaming { block ->
+            val activeStreaming = p.startStreaming { block ->
                 if (!isCurrent(localGeneration)) return@startStreaming
                 queue.put(RenderBlock(localGeneration, block))
             }
+            streaming = activeStreaming
 
             if (positionMs > 0L) {
                 extractor.seekTo(positionMs * 1000L, MediaExtractor.SEEK_TO_NEXT_SYNC)
             }
 
             publish(State.BUFFERING, "Processing karaoke audio…")
-            runDecode(extractor, audioFormat, streaming, localGeneration)
+            runDecode(extractor, audioFormat, activeStreaming, localGeneration)
             if (!isCurrent(localGeneration)) return
 
-            streaming.finish()
+            activeStreaming.finish()
             queue.finish()
             publish(State.DRAINING, "Finishing the current karaoke buffer…")
         } catch (_: InterruptedException) {
