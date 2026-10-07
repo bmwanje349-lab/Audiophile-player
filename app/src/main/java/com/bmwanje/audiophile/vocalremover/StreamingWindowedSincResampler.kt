@@ -171,7 +171,8 @@ class StreamingWindowedSincResampler(
              * partial taps are permitted and normalized below.
              */
             if (!final) {
-                val requiredExclusive = base + (TAPS / 2).toLong()
+                val requiredExclusive =
+                    base + (TAPS - (TAPS / 2 - 1)).toLong()
                 if (requiredExclusive > baseIndex + buffered) {
                     break
                 }
