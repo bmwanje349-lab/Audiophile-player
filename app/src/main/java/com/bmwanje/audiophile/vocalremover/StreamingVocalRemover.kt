@@ -389,10 +389,15 @@ private class NativeOutputAligner(
         var ready = queue.available() - latencySamples
 
         while (ready > 0 && emitted < target) {
+            val targetRemaining =
+                (target - emitted)
+                    .coerceAtMost(DSP_BLOCK.toLong())
+                    .toInt()
+
             val n =
                 min(
-                    min(ready, target - emitted).toInt(),
-                    DSP_BLOCK,
+                    ready,
+                    targetRemaining,
                 )
 
             queue.readInto(
