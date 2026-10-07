@@ -27,8 +27,6 @@ Decoded stereo PCM
 
 The production ONNX file is vendored at `app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx` and verified by SHA-256 before use. The Android app never downloads model bytes from the network. The model is copied from APK assets into app-private storage on first use and checksum-verified again before the ONNX Runtime session is created.
 
-A one-time GitHub Actions vendor workflow exists only to bootstrap the exact pinned ONNX file into the repository if the asset is missing. The normal Android build never fetches the model from the network.
-
 ### Important format distinction
 
 The supplied `UVR_MDXNET_9482.fp16acc.tflite` file is a **TFLite** model. It is not loaded by this ONNX Runtime implementation. It was inspected as a 9482 MDX-derived model with NCHW I/O metadata, but substituting it would require switching the production execution engine to LiteRT/TFLite, which is intentionally not done here.
@@ -77,5 +75,4 @@ GitHub Actions performs the following model/build gates:
 
 A successful Android build therefore uses the exact model bytes that are checked into the repository, with no model download during the build.
 
-
-> The first main-branch bootstrap vendors the pinned ONNX binary; subsequent Android builds consume the repository copy directly.
+> 
