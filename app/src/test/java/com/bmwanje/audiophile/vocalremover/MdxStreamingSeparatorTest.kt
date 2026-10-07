@@ -152,12 +152,25 @@ class MdxStreamingSeparatorTest {
                 emit = { streamedBlocks += it },
             )
 
-        streamed.push(input.leftBlock(8191, input.rightBlock(8191)))
-        streamed.push(input.leftBlock(4097, input.rightBlock(4097)))
         streamed.push(
-            input.leftBlock(
-                input.size - 12_288,
-                input.size,
+            slice(
+                input,
+                start = 0,
+                count = 8_191,
+            )
+        )
+        streamed.push(
+            slice(
+                input,
+                start = 8_191,
+                count = 4_097,
+            )
+        )
+        streamed.push(
+            slice(
+                input,
+                start = 12_288,
+                count = input.size - 12_288,
             )
         )
         streamed.finish()
@@ -165,27 +178,6 @@ class MdxStreamingSeparatorTest {
         val output = concat(streamedBlocks)
         assertEquals(batch.size, output.size)
         assertTrue(maxError(batch, output) < 2.0e-6f)
-    }
-
-    private fun VocalSeparatorCore.Stereo.leftBlock(
-        count: Int,
-        right: FloatArray,
-    ): VocalSeparatorCore.Stereo {
-        val start = 0
-        return VocalSeparatorCore.Stereo(
-            left.copyOfRange(start, count),
-            right.copyOfRange(start, count),
-        )
-    }
-
-    private fun VocalSeparatorCore.Stereo.leftBlock(
-        start: Int,
-        end: Int,
-    ): VocalSeparatorCore.Stereo {
-        return VocalSeparatorCore.Stereo(
-            left.copyOfRange(start, end),
-            right.copyOfRange(start, end),
-        )
     }
 
     private fun slice(
