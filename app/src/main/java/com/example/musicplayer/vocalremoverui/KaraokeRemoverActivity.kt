@@ -108,7 +108,7 @@ class KaraokeRemoverActivity : AppCompatActivity() {
                         userSeeking = false
                         val duration = currentDurationMs
                         if (duration > 0L) {
-                            val bar = seekBar ?: return@onStopTrackingTouch
+                            val bar = seekBar ?: return
                             val target = duration * bar.progress / 1000L
                             controller.seekWithContext(this@KaraokeRemoverActivity, target)
                         }
