@@ -1,59 +1,42 @@
-Audiophile Player — MDX-Net integration audit
-Date: 2026-10-06
+Audiophile Player — ONNX MDX-Net integration verification
 
-LOCAL TEST RESULTS
-==================
+## Build/integration gate
 
-1. Existing separator/chunk/streaming regression
-   PASS
-   - core OLA max error: 7.45e-9
-   - chunk/tail edge cases: PASS
-   - streaming separator: PASS
+The production acceptance workflow now performs all of the following against the exact pinned `UVR_MDXNET_9482.onnx` binary:
 
-2. MDX production Kotlin source compile (API stubs)
-   PASS
+1. SHA-256 verification
+2. ONNX Runtime CPU session creation
+3. one-input / one-output validation
+4. float32 validation
+5. exact [1,4,2048,256] shape validation
+6. real inference with deterministic test data
+7. finite / magnitude output checks
+8. Android debug APK compilation
 
-3. MDX host numerical reference
-   PASS
-   - 9482 STFT/iSTFT round-trip: 113.22 dB SNR
-   - Voc_FT STFT/iSTFT round-trip: 115.24 dB SNR
-   - 10% crossfade identity max error: 1.735e-18
+## Existing DSP regression baseline
 
-4. Native CMake compile
-   PASS
+The previously repaired DSP test suite reported PASS for:
 
-5. Native JNI/neural/full-chain/multi-rate regression
-   PASS
-   - JNI create/process/destroy: PASS
-   - neural correlated-accompaniment relative error: 6.1887388e-8
-   - full-chain relative RMS error: 5.2045800e-8
-   - full-chain max sample error: 1.4901161e-8
-   - 44.1/48/96 kHz block/reset: PASS
+- separator / OLA / chunk-edge behavior;
+- streaming separator;
+- MDX host STFT/iSTFT numerical checks;
+- native CMake compile;
+- JNI create/process/destroy;
+- neural depth/gain behavior;
+- full DSP subtraction chain;
+- 44.1 / 48 / 96 kHz block/reset regression;
+- ASan/UBSan JNI regression;
+- ThreadSanitizer setter/process stress.
 
-6. ASan/UBSan JNI regression
-   PASS
-   - no AddressSanitizer/UndefinedBehaviorSanitizer findings
+Representative previous numerical results included 113.22 dB 9482 STFT/iSTFT SNR, 6.19e-8 correlated-accompaniment relative error, and 5.20e-8 full-chain relative RMS error.
 
-7. ThreadSanitizer setter/process stress
-   PASS
-   - process exit code: 0
+Those are baseline regression results, not a substitute for the current GitHub CI run.
 
-DSP INTEGRITY
-=============
-The following existing production DSP files match the repaired baseline hashes and were not modified:
+## Acceptance rule
 
-PremiumVocalRemoverDSP.h
-bb59b94169e974bd02dcd011228775862340b6ee07487790e01c3d6cb05c1cb7
+Do not mark the integration as production-ready until the current GitHub Actions run passes both:
 
-native_vocal_remover.cpp
-416a52b1cdb0182b5b88a82e892b5014798f6f8483e43a6e6211d9c4a09dac0b
+- the real ONNX model smoke test; and
+- `gradle :app:assembleDebug`.
 
-ProfessionalStereoWidenerDSP_v10.h
-46da8a0ace5e2e47153f0341bab5e521f9f0206c1138dba6e3df7672b987387b
-
-REAL MODEL STATUS
-=================
-The actual 9482 .tflite binary could not be downloaded/executed in this sandbox.
-The source package therefore includes a GitHub Actions smoke test that downloads the
-pinned binary, verifies SHA-256, checks the tensor contract, and runs one real inference.
-This is the remaining external validation step.
+Real-device testing is still required for final performance, thermal and music-quality acceptance.
