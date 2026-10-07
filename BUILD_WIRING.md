@@ -28,18 +28,20 @@ The exact verified model is:
 |---|---|---|---:|
 | `LIGHT_9482` | `UVR_MDXNET_9482.onnx` | `f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184` | ~30 MB |
 
-CI downloads and verifies the model into:
+The model is committed at:
 
 ```
 app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx
 ```
+
+A one-time vendor workflow may populate that path if the asset is missing. The normal Android build only verifies the committed file; it does not download the model.
 
 The app then copies that asset to app-private storage and verifies the same checksum before loading it.
 
 ## Tensor contract
 
 ```
-[1, 4, 2048, 256] float32
+[batch, 4, 2048, 256] float32
 ```
 
 The host-side STFT stores the four planes as left-real, left-imaginary, right-real, right-imaginary.
@@ -76,8 +78,8 @@ latency-aligned instrumental output
 
 ## Failure handling
 
-Model installation is checksum-gated. Session construction is metadata-gated. A bad download, corrupted asset or wrong model shape cannot silently become the active runner.
+Model installation is checksum-gated and asset-only. Session construction is metadata-gated. A missing, corrupted or wrong model cannot silently become the active runner.
 
 ## UI
 
-The AI Vocal Remover remains a separate offline-processing feature. It does not replace the regular EQ or stereo-widener render chain.
+The AI Vocal Remover remains an offline-processing feature. It does not replace the regular EQ or stereo-widener render chain.
