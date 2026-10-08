@@ -13,27 +13,22 @@ permissions:
 jobs:
   check-model:
     runs-on: ubuntu-latest
-    outputs:
-      available: ${{ steps.model.outputs.available }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Verify vendored exact MDX ONNX model
-        id: model
         shell: bash
         run: |
           set -euo pipefail
           MODEL="app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx"
           SHA="f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184"
 
-          if [ ! -f "$MODEL" ]; then
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "MDX model is not vendored yet. The model-vendor workflow will bootstrap it on main."
-            exit 0
-          fi
+          test -f "$MODEL" || {
+            echo "::error::The exact pinned MDX-Net 9482 model is missing from the repository."
+            exit 1
+          }
 
-          echo "available=true" >> "$GITHUB_OUTPUT"
           test "$(stat -c%s "$MODEL")" -gt 1000000
           echo "$SHA  $MODEL" | sha256sum -c -
           sha256sum "$MODEL"
@@ -41,7 +36,6 @@ jobs:
 
   build:
     needs: check-model
-    if: needs.check-model.outputs.available == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -49,7 +43,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -118,6 +112,22 @@ jobs:
           echo "======================================================"
           exit "$status"
 
+      - name: Run Android instrumentation smoke tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          cores: 2
+          ram-size: 4096M
+          disk-size: 8G
+          force-avd-creation: true
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            set -euo pipefail
+            gradle :app:connectedDebugAndroidTest --console=plain --stacktrace --no-daemon
+
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -163,7 +173,7 @@ jobs:
           set -euo pipefail
           gradle :app:assembleRelease --console=plain --stacktrace --no-daemon
 
-      - name: Verify Release APK payload and signature
+      - name: Verify Release APK payload and CI/test signature
         run: |
           set -euo pipefail
           APK="app/build/outputs/apk/release/app-release.apk"
@@ -175,7 +185,7 @@ jobs:
           ACTUAL_CERT="$(sed -nE 's/.*SHA-256 digest: *([0-9A-Fa-f:]+).*/\1/p' release-certs.txt | head -1 | tr -d ':')"
           test -n "$ACTUAL_CERT"
           test "$(printf '%s' "$ACTUAL_CERT" | tr '[:upper:]' '[:lower:]')" = "$EXPECTED_CERT"
-          echo "Signed CI release certificate verification passed"
+          echo "CI/test-signed release certificate verification passed. Configure ANDROID_RELEASE_* secrets for production distribution signing."
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
