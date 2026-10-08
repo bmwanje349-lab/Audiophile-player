@@ -10,7 +10,6 @@ class VocalRemoverPipeline(
     context: Context,
     sampleRate: Int,
     private val modelSpec: MdxModelSpec = MdxModelSpec.LIGHT_9482,
-    private val cpuThreads: Int = 4,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
     private val sampleRate = sampleRate
@@ -29,7 +28,6 @@ class VocalRemoverPipeline(
             MdxOnnxVocalModelRunner(
                 file.absolutePath,
                 modelSpec,
-                cpuThreads = cpuThreads,
             )
         val previous = runner
         runner = replacement
