@@ -18,6 +18,15 @@ object MdxModelManager {
         return f.isFile && sha256(f) == spec.sha256
     }
 
+    /**
+     * Cheap UI-safe presence check. Full SHA-256 integrity is verified by
+     * [ensureInstalled] before the model is used.
+     */
+    fun isPresent(context: Context, spec: MdxModelSpec): Boolean =
+        file(context, spec).let { f ->
+            f.isFile && f.length() == spec.fileSizeBytes
+        }
+
     fun hasBundledModel(context: Context, spec: MdxModelSpec): Boolean =
         runCatching {
             context.applicationContext.assets.open(spec.assetPath).use { true }
