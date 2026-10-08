@@ -1019,6 +1019,8 @@ class LiveKaraokeEngine(
                         continue
                     }
 
+                    pollRuntimeHealth(System.nanoTime())
+
                     if (!consumerStarted) {
                         val buffered =
                             queue?.availableFrames() ?: 0
@@ -1034,7 +1036,7 @@ class LiveKaraokeEngine(
                                 )
                                 return
                             }
-                        val ready =
+                                val ready =
                             if (producerFinished) {
                                 // Even with nothing buffered (very short or
                                 // empty decode) fall through to take(), which
@@ -1127,6 +1129,7 @@ class LiveKaraokeEngine(
                         offset < block.size &&
                         !cancelled.get()
                     ) {
+                        val writeStartNs = System.nanoTime()
                         val written =
                             audioTrack?.write(
                                 block,
@@ -1134,6 +1137,10 @@ class LiveKaraokeEngine(
                                 block.size - offset,
                                 AudioTrack.WRITE_BLOCKING,
                             ) ?: 0
+                        profiler.record(
+                            LiveKaraokeStageProfiler.Stage.AUDIOTRACK_WRITE,
+                            System.nanoTime() - writeStartNs,
+                        )
 
                         if (written <= 0) {
                             error(
@@ -1146,6 +1153,18 @@ class LiveKaraokeEngine(
                             (written / 2).toLong()
 
                         val nowNs = System.nanoTime()
+                        if (
+                            !forceDspFallback &&
+                            consumerStarted &&
+                            shouldSwitchToFallback(nowNs)
+                        ) {
+                            restartAsDspFallback(
+                                id = id,
+                                reason = fallbackHealthReason(),
+                            )
+                            return
+                        }
+
                         if (
                             isCurrent(id) &&
                             (
@@ -1382,13 +1401,11 @@ class LiveKaraokeEngine(
 
             if (producerRateStartNs == 0L) {
                 producerRateStartNs = now
+                lastRateSampleNs = now
+                lastRateSampleFrames = 0L
             }
 
             producerRateFrames += emittedFrames.toLong()
-
-            if (estimatedProducerRate.isFinite()) {
-                return
-            }
 
             val minimumFrames =
                 (
@@ -1399,32 +1416,107 @@ class LiveKaraokeEngine(
                     .toLong()
                     .coerceAtLeast(1L)
 
-            if (producerRateFrames < minimumFrames) {
-                return
+            if (
+                !estimatedProducerRate.isFinite() &&
+                producerRateFrames >= minimumFrames
+            ) {
+                val elapsedSeconds =
+                    (now - producerRateStartNs)
+                        .coerceAtLeast(1L)
+                        .toDouble() /
+                        1_000_000_000.0
+
+                estimatedProducerRate =
+                    if (elapsedSeconds > 0.0) {
+                        (
+                            producerRateFrames.toDouble() /
+                                sourceSampleRate.toDouble()
+                        ) / elapsedSeconds
+                    } else {
+                        Double.NaN
+                    }
             }
 
-            val elapsedSeconds =
+            if (
+                lastRateSampleNs > 0L &&
+                now - lastRateSampleNs >= 1_000_000_000L
+            ) {
+                val deltaFrames =
+                    producerRateFrames - lastRateSampleFrames
+                val deltaSeconds =
+                    (now - lastRateSampleNs).toDouble() /
+                        1_000_000_000.0
+                if (deltaSeconds > 0.0) {
+                    rollingProducerRate =
+                        (
+                            deltaFrames.toDouble() /
+                                sourceSampleRate.toDouble()
+                        ) / deltaSeconds
+                }
+                lastRateSampleFrames = producerRateFrames
+                lastRateSampleNs = now
+            }
+        }
+
+        private fun pollRuntimeHealth(nowNs: Long) {
+            if (
+                lastHealthPollNs != 0L &&
+                nowNs - lastHealthPollNs < THERMAL_POLL_INTERVAL_MS * 1_000_000L
+            ) {
+                return
+            }
+            lastHealthPollNs = nowNs
+
+            thermalStatus =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    runCatching {
+                        (
+                            appContext.getSystemService(
+                                Context.POWER_SERVICE
+                            ) as? PowerManager
+                        )?.currentThermalStatus
+                    }.getOrNull()
+                } else {
+                    null
+                }
+        }
+
+        private fun shouldSwitchToFallback(nowNs: Long): Boolean {
+            pollRuntimeHealth(nowNs)
+
+            val bufferSeconds =
+                (queue?.availableFrames() ?: 0).toDouble() /
+                    sourceSampleRate.toDouble()
+
+            val thermalCritical =
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                    (
+                        thermalStatus == PowerManager.THERMAL_STATUS_SEVERE ||
+                            thermalStatus == PowerManager.THERMAL_STATUS_CRITICAL
+                    )
+
+            return thermalCritical ||
                 (
-                    now - producerRateStartNs
+                    rollingProducerRate.isFinite() &&
+                        rollingProducerRate < SUSTAINED_RATE_FALLBACK &&
+                        bufferSeconds <= MIN_BUFFER_BEFORE_RATE_FALLBACK_SECONDS
                 )
-                    .coerceAtLeast(1L)
-                    .toDouble() /
-                    1_000_000_000.0
+        }
 
-            if (elapsedSeconds <= 0.0) return
-
-            estimatedProducerRate =
-                (
-                    producerRateFrames.toDouble() /
-                        sourceSampleRate.toDouble()
-                ) /
-                    elapsedSeconds
-
-            /*
-             * The target is intentionally frozen by initialBufferFrames() the
-             * next time the consumer checks it. Never mutate the target after
-             * playback has started.
-             */
+        private fun fallbackHealthReason(): String {
+            val rate =
+                if (rollingProducerRate.isFinite()) {
+                    String.format(
+                        java.util.Locale.US,
+                        "%.2fx",
+                        rollingProducerRate,
+                    )
+                } else {
+                    "unknown"
+                }
+            val thermal =
+                thermalStatus?.toString() ?: "unavailable"
+            return "Live neural throughput became unsafe (rate=$rate, thermal=$thermal)."
         }
 
         private fun restartAsDspFallback(
