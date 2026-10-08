@@ -75,8 +75,8 @@ class LiveKaraokeBufferTest {
             calculateLiveKaraokeSafeBufferFrames(
                 sourceSampleRate = 44_100,
                 generatedPerWindow = 254_976,
-                startupBufferSeconds = 30,
-                startupBufferWindows = 5,
+                startupBufferSeconds = 6,
+                startupBufferWindows = 1,
                 remainingSeconds = 212.0,
                 measuredProducerRate = 1.01,
                 safetyMarginSeconds = 6.0,
