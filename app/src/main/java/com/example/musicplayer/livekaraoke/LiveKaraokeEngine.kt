@@ -18,6 +18,7 @@ import java.nio.ByteOrder
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -69,6 +70,23 @@ internal fun calculateLiveKaraokeStartupBufferFrames(
     )
 }
 
+internal fun maxLiveKaraokeLookaheadFrames(
+    sourceSampleRate: Int,
+    maxLookaheadSeconds: Int = 120,
+): Int {
+    require(sourceSampleRate > 0)
+    require(maxLookaheadSeconds > 0)
+
+    val frames =
+        sourceSampleRate.toLong() *
+            maxLookaheadSeconds.toLong()
+
+    require(frames <= Int.MAX_VALUE.toLong()) {
+        "Live Karaoke look-ahead is too large for Int frame counts"
+    }
+    return frames.toInt()
+}
+
 /**
  * Computes the one-time safety buffer needed for a stream whose measured
  * production rate is [measuredProducerRate] times real time.
@@ -92,6 +110,37 @@ internal fun calculateLiveKaraokeSafeBufferFrames(
     safetyMarginSeconds: Double,
     maxLookaheadFrames: Int,
 ): Int {
+    val requiredFrames =
+        calculateLiveKaraokeRequiredBufferFrames(
+            sourceSampleRate = sourceSampleRate,
+            generatedPerWindow = generatedPerWindow,
+            startupBufferSeconds = startupBufferSeconds,
+            startupBufferWindows = startupBufferWindows,
+            remainingSeconds = remainingSeconds,
+            measuredProducerRate = measuredProducerRate,
+            safetyMarginSeconds = safetyMarginSeconds,
+        )
+
+    require(requiredFrames <= maxLookaheadFrames.toLong()) {
+        "Neural throughput requires " +
+            requiredFrames +
+            " frames, but the bounded Live Karaoke queue can hold only " +
+            maxLookaheadFrames +
+            " frames"
+    }
+
+    return requiredFrames.toInt()
+}
+
+internal fun calculateLiveKaraokeRequiredBufferFrames(
+    sourceSampleRate: Int,
+    generatedPerWindow: Int,
+    startupBufferSeconds: Int,
+    startupBufferWindows: Int,
+    remainingSeconds: Double,
+    measuredProducerRate: Double,
+    safetyMarginSeconds: Double,
+): Long {
     require(sourceSampleRate > 0)
     require(generatedPerWindow > 0)
     require(startupBufferSeconds > 0)
@@ -99,7 +148,6 @@ internal fun calculateLiveKaraokeSafeBufferFrames(
     require(remainingSeconds >= 0.0)
     require(measuredProducerRate.isFinite() && measuredProducerRate > 0.0)
     require(safetyMarginSeconds >= 0.0)
-    require(maxLookaheadFrames > 0)
 
     val fixedMinimumFrames =
         calculateLiveKaraokeStartupBufferFrames(
@@ -107,8 +155,9 @@ internal fun calculateLiveKaraokeSafeBufferFrames(
             generatedPerWindow = generatedPerWindow,
             startupBufferSeconds = startupBufferSeconds,
             startupBufferWindows = startupBufferWindows,
-            maxLookaheadFrames = maxLookaheadFrames,
+            maxLookaheadFrames = Int.MAX_VALUE,
         )
+            .toLong()
 
     val requiredSeconds =
         if (measuredProducerRate < 1.0) {
@@ -122,20 +171,22 @@ internal fun calculateLiveKaraokeSafeBufferFrames(
             startupBufferSeconds.toDouble()
         }
 
+    /*
+     * A seamless-playback guarantee is an inequality. Never round the
+     * required sample count down; use ceiling so the buffered audio is at
+     * least the mathematically required duration.
+     */
     val timeBased =
-        (
+        ceil(
             sourceSampleRate.toDouble() *
                 requiredSeconds
         )
-            .roundToInt()
-            .coerceAtLeast(1)
+            .toLong()
+            .coerceAtLeast(1L)
 
-    return min(
-        maxLookaheadFrames,
-        max(
-            fixedMinimumFrames,
-            timeBased,
-        ),
+    return max(
+        fixedMinimumFrames,
+        timeBased,
     )
 }
 
@@ -244,7 +295,7 @@ class LiveKaraokeEngine(
         // after several inference windows. Keep a deep bounded head-start so
         // small throughput deficits and transient CPU/GC stalls are absorbed
         // without ever pausing AudioTrack.
-        const val MAX_LOOKAHEAD_FRAMES = 5_292_000 // ~120 s @ 44.1 kHz
+        const val MAX_LOOKAHEAD_SECONDS = 120
         const val STARTUP_BUFFER_SECONDS = 30
         const val STARTUP_BUFFER_WINDOWS = 5
         const val RATE_ESTIMATION_MIN_SECONDS = 10.0
@@ -387,10 +438,7 @@ class LiveKaraokeEngine(
         private var startupTargetFinalized = false
 
         private val cancelled = AtomicBoolean(false)
-        private val queue =
-            LivePcmQueue(
-                maxFrames = MAX_LOOKAHEAD_FRAMES,
-            )
+        private var queue: LivePcmQueue? = null
 
         private var executor: ExecutorService? = null
         private var audioTrack: AudioTrack? = null
@@ -452,7 +500,7 @@ class LiveKaraokeEngine(
         fun stop() {
             if (!cancelled.compareAndSet(false, true)) return
 
-            queue.cancel()
+            queue?.cancel()
             runCatching { audioTrack?.pause() }
             runCatching { audioTrack?.stop() }
             executor?.shutdownNow()
@@ -489,6 +537,15 @@ class LiveKaraokeEngine(
                     inputFormat.getIntegerSafely(
                         MediaFormat.KEY_SAMPLE_RATE
                     ) ?: error("Source sample rate is unavailable")
+
+                queue =
+                    LivePcmQueue(
+                        maxFrames =
+                            maxLiveKaraokeLookaheadFrames(
+                                sourceSampleRate,
+                                MAX_LOOKAHEAD_SECONDS,
+                            ),
+                    )
 
                 val channels =
                     inputFormat.getIntegerSafely(
@@ -629,7 +686,7 @@ class LiveKaraokeEngine(
                 if (!cancelled.get()) {
                     streaming.finish()
                     producerFinished = true
-                    queue.finish()
+                    queue?.finish()
                 }
             } catch (throwable: Throwable) {
                 fail(throwable)
@@ -666,7 +723,7 @@ class LiveKaraokeEngine(
 
                     if (!consumerStarted) {
                         val buffered =
-                            queue.availableFrames()
+                            queue?.availableFrames() ?: 0
                         val required =
                             initialBufferFrames()
                         val ready =
@@ -725,7 +782,7 @@ class LiveKaraokeEngine(
                         }
                     }
 
-                    val block = queue.take() ?: break
+                    val block = queue?.take() ?: break
                     var offset = 0
 
                     while (
@@ -795,7 +852,7 @@ class LiveKaraokeEngine(
         private fun fail(throwable: Throwable) {
             if (!cancelled.compareAndSet(false, true)) return
             producerFinished = true
-            queue.cancel()
+            queue?.cancel()
             executor?.shutdownNow()
             if (!consumerStarted) {
                 releaseAudioTrack()
@@ -899,6 +956,12 @@ class LiveKaraokeEngine(
                     .roundToInt()
                     .coerceAtLeast(1)
 
+            val maxLookaheadFrames =
+                maxLiveKaraokeLookaheadFrames(
+                    sourceSampleRate,
+                    MAX_LOOKAHEAD_SECONDS,
+                )
+
             if (startupTargetFinalized) {
                 return startupTargetFrames
             }
@@ -913,7 +976,7 @@ class LiveKaraokeEngine(
                     generatedPerWindow = generatedPerWindow,
                     startupBufferSeconds = STARTUP_BUFFER_SECONDS,
                     startupBufferWindows = STARTUP_BUFFER_WINDOWS,
-                    maxLookaheadFrames = MAX_LOOKAHEAD_FRAMES,
+                    maxLookaheadFrames = maxLookaheadFrames,
                 )
             }
 
@@ -1040,7 +1103,7 @@ class LiveKaraokeEngine(
                     floatToPcm16(block.right[index])
             }
 
-            queue.put(pcm)
+            queue?.put(pcm) ?: error("Live PCM queue is not initialized")
         }
 
         private fun decodeLoop(
