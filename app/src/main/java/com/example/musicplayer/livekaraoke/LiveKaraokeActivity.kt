@@ -447,6 +447,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
                 isEnabled = false
                 setOnClickListener {
                     service?.stopPlayback()
+                    recoverNormalPlayback()
                 }
             }
 
