@@ -16,7 +16,7 @@ import com.bmwanje.audiophile.vocalremover.MdxModelManager
 import com.bmwanje.audiophile.vocalremover.MdxModelSpec
 import com.bmwanje.audiophile.vocalremover.MdxStft
 import com.bmwanje.audiophile.vocalremover.NativeVocalRemover
-import com.example.musicplayer.livekaraoke.LiveStreamingVocalRemover
+import com.bmwanje.audiophile.vocalremover.LiveStreamingVocalRemover
 import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
