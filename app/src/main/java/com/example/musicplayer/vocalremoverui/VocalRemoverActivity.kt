@@ -3,7 +3,12 @@ package com.example.musicplayer.vocalremoverui
 import android.content.ComponentName
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
+import android.view.Gravity
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
@@ -20,8 +25,8 @@ class VocalRemoverActivity :
     private var controller: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
 
-    private lateinit var audioRenderRepository: AudioRenderRepository
-    private lateinit var vocalRemoverUi: VocalRemoverUi
+    private var audioRenderRepository: AudioRenderRepository? = null
+    private var vocalRemoverUi: VocalRemoverUi? = null
 
     private var processedTrackTitle = "Instrumental copy"
 
@@ -33,16 +38,77 @@ class VocalRemoverActivity :
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        audioRenderRepository =
-            AudioRenderRepository(this)
+        try {
+            val ui = VocalRemoverUi(this)
+            vocalRemoverUi = ui
 
-        vocalRemoverUi =
-            VocalRemoverUi(this)
+            val root = FrameLayout(this)
+            root.addView(ui.build(root))
+            setContentView(root)
+        } catch (throwable: Throwable) {
+            Log.e(TAG, "AI Vocal Remover failed to initialize", throwable)
+            showInitializationError(throwable)
+        }
+    }
 
-        val root = FrameLayout(this)
+    private fun showInitializationError(throwable: Throwable) {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(24), dp(32), dp(24), dp(32))
+            setBackgroundColor(0xFF0A0C0F.toInt())
+        }
 
         root.addView(
-            vocalRemoverUi.build(root)
+            TextView(this).apply {
+                text = "AI Vocal Remover could not open"
+                setTextColor(0xFFF2F5F7.toInt())
+                textSize = 22f
+                gravity = Gravity.CENTER
+            },
+            LinearLayout.LayoutParams(-1, -2),
+        )
+
+        val cause = generateSequence(throwable) { it.cause }.lastOrNull()
+            ?: throwable
+
+        root.addView(
+            TextView(this).apply {
+                text = buildString {
+                    append(cause.javaClass.simpleName)
+                    val message = cause.message?.takeIf { it.isNotBlank() }
+                    if (message != null) {
+                        append(": ")
+                        append(message)
+                    }
+                }
+                setTextColor(0xFFA7AFBA.toInt())
+                textSize = 14f
+                gravity = Gravity.CENTER
+                setPadding(0, dp(12), 0, dp(16))
+            },
+            LinearLayout.LayoutParams(-1, -2),
+        )
+
+        root.addView(
+            TextView(this).apply {
+                text = "The failure was caught before audio processing started. The app can remain open while the problem is diagnosed."
+                setTextColor(0xFF737C88.toInt())
+                textSize = 13f
+                gravity = Gravity.CENTER
+            },
+            LinearLayout.LayoutParams(-1, -2),
+        )
+
+        root.addView(
+            Button(this).apply {
+                text = "Back"
+                setOnClickListener { finish() }
+            },
+            LinearLayout.LayoutParams(-2, dp(48)).apply {
+                topMargin = dp(20)
+                gravity = Gravity.CENTER_HORIZONTAL
+            },
         )
 
         setContentView(root)
@@ -103,7 +169,23 @@ class VocalRemoverActivity :
         val titleSuffix = " — Instrumental"
         processedTrackTitle = sourceTitle + titleSuffix
 
-        audioRenderRepository.renderVocalRemovalToWav(
+        val repository =
+            runCatching {
+                audioRenderRepository ?: AudioRenderRepository(this).also {
+                    audioRenderRepository = it
+                }
+            }.getOrElse { throwable ->
+                onError(
+                    IllegalStateException(
+                        "Unable to start the audio renderer",
+                        throwable,
+                    ),
+                )
+                return
+            }
+
+        runCatching {
+            repository.renderVocalRemovalToWav(
             uri = source.uri,
             titleSuffix = titleSuffix,
             pipelineFactory = { sampleRate ->
@@ -123,9 +205,17 @@ class VocalRemoverActivity :
             },
             onProgress = onProgress,
             onMdxChunks = onMdxChunks,
-            onReady = onReady,
-            onError = onError,
-        )
+                onReady = onReady,
+                onError = onError,
+            )
+        }.onFailure { throwable ->
+            onError(
+                IllegalStateException(
+                    "Unable to start the vocal-removal render",
+                    throwable,
+                ),
+            )
+        }
     }
 
     override fun playProcessedUri(
@@ -194,12 +284,10 @@ class VocalRemoverActivity :
     }
 
     override fun onDestroy() {
-        vocalRemoverUi.close()
-        audioRenderRepository.close()
+        vocalRemoverUi?.close()
+        audioRenderRepository?.close()
 
-        val future =
-            controllerFuture
-
+        val future = controllerFuture
         controllerFuture = null
 
         if (future != null && !future.isDone) {
@@ -212,6 +300,12 @@ class VocalRemoverActivity :
         super.onDestroy()
     }
 
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
-
+    companion object {
+        const val EXTRA_TRACK_URI = "extra_track_uri"
+        const val EXTRA_TRACK_TITLE = "extra_track_title"
+        private const val TAG = "VocalRemoverActivity"
+    }
 }
