@@ -373,11 +373,9 @@ class VocalRemoverUi(
     private fun ensureModel() {
         val context = uiContext
 
-        if (ModelManager.isInstalled(context)) {
-            status.text = "AI model ready"
-            modelButton.text = "Model ready"
-            modelButton.isEnabled = false
-            return
+        if (ModelManager.isPresent(context)) {
+            status.text = "Checking AI model…"
+            progressText.text = "Verifying the local model before use."
         }
 
         modelButton.isEnabled = false
