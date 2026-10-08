@@ -440,7 +440,12 @@ class LiveKaraokeEngine(
                 runCatching { streaming?.close() }
                 runCatching { pipeline?.close() }
                 pipeline = null
-                releaseAudioTrack()
+                // AudioTrack belongs to the consumer once it has been created.
+                // The consumer releases it after the final queued PCM block is
+                // written. Releasing it here would truncate buffered audio.
+                if (!consumerStarted && cancelled.get()) {
+                    releaseAudioTrack()
+                }
             }
         }
 
@@ -552,6 +557,9 @@ class LiveKaraokeEngine(
             producerFinished = true
             queue.cancel()
             executor?.shutdownNow()
+            if (!consumerStarted) {
+                releaseAudioTrack()
+            }
             if (isCurrent(id)) {
                 listener.onError(throwable)
             }
