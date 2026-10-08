@@ -734,7 +734,7 @@ class LiveKaraokeEngine(
                     elapsedSeconds
         }
 
-        private fun bufferedSeconds(frames: Int) {
+        private fun bufferedSeconds(frames: Int): String {
             val seconds =
                 frames.toDouble() /
                     sourceSampleRate.toDouble()
