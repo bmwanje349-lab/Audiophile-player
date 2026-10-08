@@ -108,7 +108,7 @@ class LiveMdxOnnxVocalModelRunnerInstrumentedTest {
 
         try {
             val sourceSamples =
-                MdxStft(spec).chunkSizeSamples() + 8_000
+                MdxStft(spec).chunkSizeSamples()
             val blockSize = 8_191
             var position = 0
 
