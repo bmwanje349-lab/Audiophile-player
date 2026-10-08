@@ -1534,6 +1534,12 @@ class LiveKaraokeEngine(
                     return
                 }
 
+                val resumePositionMs =
+                    current.playbackPositionMs().coerceAtLeast(
+                        current.playbackStartMs.coerceAtLeast(0L),
+                    )
+                val report = profiler.report(sourceSampleRate)
+
                 current.stop()
                 generation += 1L
 
@@ -1541,17 +1547,20 @@ class LiveKaraokeEngine(
                     Session(
                         id = generation,
                         uri = current.uri,
-                        requestedPositionMs =
-                            current.playbackStartMs.coerceAtLeast(0L),
+                        requestedPositionMs = resumePositionMs,
                         settings = current.settings,
                         forceDspFallback = true,
                     )
 
                 session = next
 
+                Log.i(PROFILE_TAG, report)
                 listener.onState(
                     State.BUFFERING,
-                    reason + " Switching to Fast Live — no multi-minute prebuffer.",
+                    reason +
+                        " Switching to Fast Live — resuming near " +
+                        resumePositionMs +
+                        " ms.",
                 )
                 next.start()
             }
@@ -1606,7 +1615,12 @@ class LiveKaraokeEngine(
                     floatToPcm16(block.right[index])
             }
 
+            val queueStartNs = System.nanoTime()
             queue?.put(pcm) ?: error("Live PCM queue is not initialized")
+            profiler.record(
+                LiveKaraokeStageProfiler.Stage.QUEUE_ENQUEUE,
+                System.nanoTime() - queueStartNs,
+            )
         }
 
         private fun decodeLoop(
@@ -1760,12 +1774,16 @@ class LiveKaraokeEngine(
                                         bufferInfo.size
                                 )
 
-                                feedDecodedPcm(
-                                    buffer = duplicate,
-                                    encoding = encoding,
-                                    channels = decoderChannels,
-                                    onPcmBlock = onPcmBlock,
-                                )
+                                profiler.measure(
+                                    LiveKaraokeStageProfiler.Stage.DECODE_LOOP
+                                ) {
+                                    feedDecodedPcm(
+                                        buffer = duplicate,
+                                        encoding = encoding,
+                                        channels = decoderChannels,
+                                        onPcmBlock = onPcmBlock,
+                                    )
+                                }
                             }
 
                             val eos =
