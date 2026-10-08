@@ -207,6 +207,8 @@ class LiveStreamingVocalRemover(
     override fun close() {
         mixQueue.clear()
         vocalQueue.clear()
+        runCatching { native.close() }
+        runCatching { runner.close() }
     }
 }
 
