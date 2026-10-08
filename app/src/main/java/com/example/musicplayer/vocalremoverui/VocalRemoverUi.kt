@@ -426,6 +426,8 @@ class VocalRemoverUi(
                     }
                 } catch (throwable: Throwable) {
                     main.post {
+                        if (closed) return@post
+
                         progress.visibility = View.GONE
 
                         status.text =
