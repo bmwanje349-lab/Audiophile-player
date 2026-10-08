@@ -266,6 +266,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up Android SDK
+        if: steps.signing.outputs.configured == 'true'
+        uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: true
+
+      - name: Install Android build dependencies
+        if: steps.signing.outputs.configured == 'true'
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.3.13750724"
+
       - name: Set up Gradle
         if: steps.signing.outputs.configured == 'true'
         uses: gradle/actions/setup-gradle@v4
