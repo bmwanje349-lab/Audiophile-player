@@ -1,7 +1,0 @@
-// ONNX Runtime is the canonical neural backend for this app.
-implementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
-implementation("com.github.wendykierp:JTransforms:3.1")
-
-// Keep the existing native EQ, premium vocal-removal and stereo-widener
-// libraries unchanged. The MDX model is fetched/verified by CI and bundled
-// into app/src/main/assets/models/mdx/ for production APKs.
