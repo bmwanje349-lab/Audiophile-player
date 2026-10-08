@@ -172,10 +172,11 @@ class LiveKaraokeActivity : AppCompatActivity() {
                 bound = service != null
 
                 service?.let {
+                    val currentState = it.currentState()
                     status.text =
-                        when (it.currentState()) {
+                        when (currentState) {
                             LiveKaraokeEngine.State.STOPPED ->
-                                "Ready — start live karaoke to begin MDX-Net processing."
+                                "Starting live karaoke automatically…"
 
                             LiveKaraokeEngine.State.BUFFERING,
                             LiveKaraokeEngine.State.SEEKING ->
@@ -187,6 +188,9 @@ class LiveKaraokeActivity : AppCompatActivity() {
                             LiveKaraokeEngine.State.PAUSED ->
                                 "Live karaoke paused"
                         }
+                    if (currentState == LiveKaraokeEngine.State.STOPPED) {
+                        autoStartLiveKaraoke()
+                    }
                 }
             }
 
@@ -243,7 +247,6 @@ class LiveKaraokeActivity : AppCompatActivity() {
             BIND_AUTO_CREATE,
         )
 
-        autoStartLiveKaraoke()
     }
 
     override fun onStop() {
