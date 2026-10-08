@@ -151,12 +151,14 @@ internal fun calculateLiveKaraokeSafeBufferFrames(
             safetyMarginSeconds = safetyMarginSeconds,
         )
 
-    require(requiredFrames <= maxLookaheadFrames.toLong()) {
-        "Neural throughput requires " +
-            requiredFrames +
-            " frames, but the bounded Live Karaoke queue can hold only " +
-            maxLookaheadFrames +
-            " frames"
+    if (requiredFrames > maxLookaheadFrames.toLong()) {
+        throw NeuralLiveNotViableException(
+            "Neural throughput requires " +
+                requiredFrames +
+                " frames, but the bounded Live Karaoke queue can hold only " +
+                maxLookaheadFrames +
+                " frames.",
+        )
     }
 
     return requiredFrames.toInt()

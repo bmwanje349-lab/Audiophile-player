@@ -57,6 +57,20 @@ class LiveKaraokeBufferTest {
         )
     }
 
+    @Test(expected = NeuralLiveNotViableException::class)
+    fun overCapNeuralBufferUsesFallbackExceptionEvenAtNearRealtimeRate() {
+        calculateLiveKaraokeSafeBufferFrames(
+            sourceSampleRate = 44_100,
+            generatedPerWindow = 254_976,
+            startupBufferSeconds = 6,
+            startupBufferWindows = 1,
+            remainingSeconds = 2_000.0,
+            measuredProducerRate = 0.96,
+            safetyMarginSeconds = 6.0,
+            maxLookaheadFrames = 32 * 44_100,
+        )
+    }
+
     @Test
     fun lookaheadCapacityScalesWithSourceRate() {
         assertEquals(
