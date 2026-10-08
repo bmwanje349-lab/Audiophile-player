@@ -333,8 +333,8 @@ class LiveKaraokeEngine(
         // small throughput deficits and transient CPU/GC stalls are absorbed
         // without ever pausing AudioTrack.
         const val MAX_LOOKAHEAD_SECONDS = 120
-        const val STARTUP_BUFFER_SECONDS = 30
-        const val STARTUP_BUFFER_WINDOWS = 5
+        const val STARTUP_BUFFER_SECONDS = 6
+        const val STARTUP_BUFFER_WINDOWS = 1
         const val RATE_ESTIMATION_MIN_SECONDS = 5.5
         const val LIVE_SAFETY_MARGIN_SECONDS = 6.0
         const val AUDIO_TRACK_BUFFER_SECONDS = 2
