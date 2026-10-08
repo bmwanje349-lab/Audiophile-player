@@ -21,23 +21,30 @@ class MdxOnnxVocalModelRunner(
 
     private val stft = MdxStft(modelSpec)
     private val environment = OrtEnvironment.getEnvironment()
+    private val sessionOptions: OrtSession.SessionOptions
     private val session: OrtSession
     private val inputName: String
     private val outputName: String
     private var inferenceCounter = 0L
 
     init {
-        val options = OrtSession.SessionOptions().apply {
+        sessionOptions = OrtSession.SessionOptions().apply {
             setIntraOpNumThreads(cpuThreads.coerceAtLeast(1))
             setInterOpNumThreads(1)
         }
-        session = environment.createSession(modelPath, options)
-        inputName = session.inputNames.singleOrNull()
-            ?: error("9482 ONNX model must expose exactly one input")
-        outputName = session.outputNames.singleOrNull()
-            ?: error("9482 ONNX model must expose exactly one output")
-        validateTensor("input", session.inputInfo[inputName]?.info)
-        validateTensor("output", session.outputInfo[outputName]?.info)
+
+        try {
+            session = environment.createSession(modelPath, sessionOptions)
+            inputName = session.inputNames.singleOrNull()
+                ?: error("9482 ONNX model must expose exactly one input")
+            outputName = session.outputNames.singleOrNull()
+                ?: error("9482 ONNX model must expose exactly one output")
+            validateTensor("input", session.inputInfo[inputName]?.info)
+            validateTensor("output", session.outputInfo[outputName]?.info)
+        } catch (throwable: Throwable) {
+            runCatching { sessionOptions.close() }
+            throw throwable
+        }
     }
 
     @Synchronized
@@ -49,7 +56,6 @@ class MdxOnnxVocalModelRunner(
         require(right.size == stft.chunkSizeSamples())
 
         val input = stft.forward(left, right)
-        inferenceCounter += 1L
         val shape = longArrayOf(1L, 4L, modelSpec.dimF.toLong(), modelSpec.dimT.toLong())
 
         OnnxTensor.createTensor(environment, FloatBuffer.wrap(input.data), shape).use { tensor ->
@@ -68,6 +74,7 @@ class MdxOnnxVocalModelRunner(
                         " != " + stft.tensorSize()
                 }
 
+                inferenceCounter += 1L
                 val (vocL, vocR) = stft.inverse(MdxStft.Spectrogram(output))
                 return MdxStft.StereoChunk(vocL, vocR)
             }
@@ -107,6 +114,7 @@ class MdxOnnxVocalModelRunner(
     }
 
     override fun close() {
-        session.close()
+        runCatching { session.close() }
+            .also { runCatching { sessionOptions.close() } }
     }
 }
