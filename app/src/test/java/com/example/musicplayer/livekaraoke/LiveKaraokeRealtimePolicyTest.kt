@@ -97,4 +97,20 @@ class LiveKaraokeRealtimePolicyTest {
             )
         )
     }
+
+    @Test
+    fun memoryPolicyKeepsLiveLookaheadInTensOfSeconds() {
+        assertEquals(20, LiveKaraokePerformancePolicy.maxLookaheadSeconds(192))
+        assertEquals(24, LiveKaraokePerformancePolicy.maxLookaheadSeconds(256))
+        assertEquals(32, LiveKaraokePerformancePolicy.maxLookaheadSeconds(384))
+        assertEquals(48, LiveKaraokePerformancePolicy.maxLookaheadSeconds(512))
+    }
+
+    @Test
+    fun defaultLookaheadIsNowBoundedWithoutMinuteScaleQueue() {
+        assertEquals(
+            32 * 48_000,
+            maxLiveKaraokeLookaheadFrames(48_000),
+        )
+    }
 }
