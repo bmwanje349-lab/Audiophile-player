@@ -44,6 +44,7 @@ android {
             signingConfig = signingConfigs.getByName("ciDebug")
         }
         release {
+            signingConfig = signingConfigs.getByName("ciDebug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

@@ -158,16 +158,30 @@ jobs:
           test "$(printf '%s' "$ACTUAL_CERT" | tr '[:upper:]' '[:lower:]')" = "$EXPECTED_CERT"
           echo "Stable CI debug certificate verification passed"
 
-      - name: Build unsigned Release APK
+      - name: Build signed Release APK
         run: |
           set -euo pipefail
           gradle :app:assembleRelease --console=plain --stacktrace --no-daemon
 
+      - name: Verify Release APK payload and signature
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          unzip -t "$APK" >/dev/null
+          EXPECTED_CERT="0ed92464fd40ef0ad106cbaf2e4cd5aebb55e388bb77123d2504f8fed1208b9e"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" > release-certs.txt
+          cat release-certs.txt
+          ACTUAL_CERT="$(sed -nE 's/.*SHA-256 digest: *([0-9A-Fa-f:]+).*/\1/p' release-certs.txt | head -1 | tr -d ':')"
+          test -n "$ACTUAL_CERT"
+          test "$(printf '%s' "$ACTUAL_CERT" | tr '[:upper:]' '[:lower:]')" = "$EXPECTED_CERT"
+          echo "Signed CI release certificate verification passed"
+
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-unsigned
-          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          name: app-release
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
       - name: Upload build log

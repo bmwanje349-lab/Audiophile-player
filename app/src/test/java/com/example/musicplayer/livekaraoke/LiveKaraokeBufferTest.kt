@@ -43,8 +43,8 @@ class LiveKaraokeBufferTest {
         )
     }
 
-    @Test(expected = IllegalArgumentException::class)
-    fun impossibleThroughputIsRejectedInsteadOfStartingUnsafely() {
+    @Test(expected = NeuralLiveNotViableException::class)
+    fun impossibleThroughputIsRejectedForFastFallbackInsteadOfStartingUnsafely() {
         calculateLiveKaraokeSafeBufferFrames(
             sourceSampleRate = 44_100,
             generatedPerWindow = 254_976,

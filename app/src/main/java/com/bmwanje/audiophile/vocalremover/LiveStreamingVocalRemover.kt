@@ -166,6 +166,33 @@ internal class LiveStreamingVocalRemover(
     fun mdxInferenceCount(): Long =
         (runner as? LiveMdxOnnxVocalModelRunner)?.inferenceCount() ?: 0L
 
+    /**
+     * Transfers source PCM already decoded by the neural path but still
+     * waiting for its vocal stem. This is the bridge used when Fast Live takes
+     * over, so playback can continue on the same output timeline.
+     */
+    @Synchronized
+    fun drainPendingMixTo(consumer: (VocalSeparatorCore.Stereo) -> Unit) {
+        while (mixQueue.available() > 0) {
+            val n =
+                min(
+                    DSP_BLOCK,
+                    mixQueue.available(),
+                )
+            mixQueue.readInto(
+                processL,
+                processR,
+                n,
+            )
+            consumer(
+                VocalSeparatorCore.Stereo(
+                    processL.copyOf(n),
+                    processR.copyOf(n),
+                )
+            )
+        }
+    }
+
     private fun drainPairs() {
         while (mixQueue.available() > 0 && vocalQueue.available() > 0) {
             val n = min(
