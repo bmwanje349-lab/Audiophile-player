@@ -83,6 +83,7 @@ class LiveKaraokeEngine(
         const val AUDIO_TRACK_BUFFER_SECONDS = 6
         const val RATE_ESTIMATION_MIN_SECONDS = 10.0
         const val DYNAMIC_HEADROOM_SECONDS = 6.0
+        const val UI_UPDATE_INTERVAL_MS = 250L
         const val SEEK_CONTEXT_MARGIN_MS = 100L
     }
 
@@ -206,6 +207,7 @@ class LiveKaraokeEngine(
 
         private var producerRateStartNs = 0L
         private var producerRateFrames = 0L
+        private var lastUiUpdateNs = 0L
 
         private val cancelled = AtomicBoolean(false)
         private val queue =
@@ -497,7 +499,17 @@ class LiveKaraokeEngine(
                                 (producerFinished && buffered > 0)
 
                         if (!ready) {
-                            if (isCurrent(id)) {
+                            val nowNs = System.nanoTime()
+                            val shouldUpdateUi =
+                                lastUiUpdateNs == 0L ||
+                                    nowNs - lastUiUpdateNs >=
+                                    UI_UPDATE_INTERVAL_MS * 1_000_000L
+
+                            if (
+                                shouldUpdateUi &&
+                                isCurrent(id)
+                            ) {
+                                lastUiUpdateNs = nowNs
                                 listener.onState(
                                     State.BUFFERING,
                                     "Building a safe instrumental buffer — " +
@@ -551,7 +563,16 @@ class LiveKaraokeEngine(
                         playedFrames +=
                             (written / 2).toLong()
 
-                        if (isCurrent(id)) {
+                        val nowNs = System.nanoTime()
+                        if (
+                            isCurrent(id) &&
+                            (
+                                lastUiUpdateNs == 0L ||
+                                    nowNs - lastUiUpdateNs >=
+                                    UI_UPDATE_INTERVAL_MS * 1_000_000L
+                            )
+                        ) {
+                            lastUiUpdateNs = nowNs
                             listener.onProgress(
                                 playbackPositionMs(),
                                 durationMs,
