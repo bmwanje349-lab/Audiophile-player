@@ -34,6 +34,9 @@ internal class LiveDspFallbackProcessor(
     private val zeroR = FloatArray(BLOCK)
     private val outL = FloatArray(BLOCK)
     private val outR = FloatArray(BLOCK)
+    private var sourceSamples = 0L
+    private var emittedSamples = 0L
+    private var latencyToDrop = native.latencySamples()
     private var finished = false
 
     init {
@@ -69,12 +72,35 @@ internal class LiveDspFallbackProcessor(
                 count = n,
             )
 
-            emit(
-                VocalSeparatorCore.Stereo(
-                    outL.copyOf(n),
-                    outR.copyOf(n),
-                )
-            )
+            sourceSamples += n.toLong()
+
+            var start = 0
+            var available = n
+
+            if (latencyToDrop > 0) {
+                val drop = min(latencyToDrop, available)
+                latencyToDrop -= drop
+                start += drop
+                available -= drop
+            }
+
+            if (available > 0) {
+                val remaining =
+                    (sourceSamples - emittedSamples)
+                        .coerceAtLeast(0L)
+                        .coerceAtMost(available.toLong())
+                        .toInt()
+
+                if (remaining > 0) {
+                    emit(
+                        VocalSeparatorCore.Stereo(
+                            outL.copyOfRange(start, start + remaining),
+                            outR.copyOfRange(start, start + remaining),
+                        )
+                    )
+                    emittedSamples += remaining.toLong()
+                }
+            }
 
             offset += n
         }
@@ -92,7 +118,10 @@ internal class LiveDspFallbackProcessor(
         var remaining =
             native.latencySamples() + TAIL_SAMPLES_EXTRA
 
-        while (remaining > 0) {
+        while (
+            remaining > 0 &&
+            emittedSamples < sourceSamples
+        ) {
             val n = min(BLOCK, remaining)
 
             native.processBlock(
@@ -105,14 +134,47 @@ internal class LiveDspFallbackProcessor(
                 count = n,
             )
 
-            emit(
-                VocalSeparatorCore.Stereo(
-                    outL.copyOf(n),
-                    outR.copyOf(n),
-                )
-            )
+            var start = 0
+            var available = n
+
+            if (latencyToDrop > 0) {
+                val drop = min(latencyToDrop, available)
+                latencyToDrop -= drop
+                start += drop
+                available -= drop
+            }
+
+            if (available > 0) {
+                val remainingOutput =
+                    (sourceSamples - emittedSamples)
+                        .coerceAtMost(available.toLong())
+                        .toInt()
+
+                if (remainingOutput > 0) {
+                    emit(
+                        VocalSeparatorCore.Stereo(
+                            outL.copyOfRange(
+                                start,
+                                start + remainingOutput,
+                            ),
+                            outR.copyOfRange(
+                                start,
+                                start + remainingOutput,
+                            ),
+                        )
+                    )
+                    emittedSamples += remainingOutput.toLong()
+                }
+            }
 
             remaining -= n
+        }
+
+        check(emittedSamples == sourceSamples) {
+            "Fast Live DSP alignment emitted " +
+                emittedSamples +
+                " samples; expected " +
+                sourceSamples
         }
     }
 
