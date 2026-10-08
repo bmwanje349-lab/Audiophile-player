@@ -1,49 +1,31 @@
-Audiophile Player — ONNX MDX-Net integration verification
+Audiophile Player — MDX-Net / Live Karaoke verification
 
-## Build/integration gate
+## Current acceptance gate
 
-The production acceptance workflow now performs all of the following against the exact pinned `UVR_MDXNET_9482.onnx` binary:
+The repository is wired so the current GitHub Actions pipeline can verify the exact production model and the Android processing path:
 
-1. SHA-256 verification
-2. ONNX Runtime CPU session creation
-3. one-input / one-output validation
-4. float32 validation
-5. exact [1,4,2048,256] shape validation
-6. real inference with deterministic test data
-7. finite / magnitude output checks
-8. Android debug APK compilation
+1. Verify the vendored ONNX file size and SHA-256.
+2. Run a real ONNX Runtime CPU smoke test against that exact binary.
+3. Run the JVM streaming/STFT/resampler/Live Karaoke regression suite.
+4. Assemble the debug APK and verify the bundled model/native payload.
+5. Assemble a deterministic CI-signed release variant and verify its APK signature.
+6. Run Android instrumentation on an API-35 emulator covering real bundled-model ONNX Runtime inference, the bounded MDX streaming separator, and exact neural-to-Fast pending-audio handoff continuity.
+7. Build the production `release` variant when the four production signing secrets are supplied.
 
-## Existing DSP regression baseline
+## Current implementation status
 
-The previously repaired DSP test suite reported PASS for:
+- Production neural backend: ONNX Runtime Android + pinned UVR MDX-Net 9482.
+- Model distribution: APK-vendored asset only; no runtime network model download.
+- Live processing: bounded, progressive, source-rate-aware, AudioTrack-backed.
+- Fast fallback: same PCM timeline, no decoder/output restart.
+- Pause/resume: gates decode, inference and playback.
+- Seek: rebuilds neural context while reusing the cached model session.
+- Native DSP shutdown: protected against stop/seek races by inference-worker ownership.
+- PEQ and Stereo Widener remain outside the vocal-remover backend.
+- No active HT-Demucs model/runtime is present in the current app module.
 
-- separator / OLA / chunk-edge behavior;
-- streaming separator;
-- MDX host STFT/iSTFT numerical checks;
-- native CMake compile;
-- JNI create/process/destroy;
-- neural depth/gain behavior;
-- full DSP subtraction chain;
-- 44.1 / 48 / 96 kHz block/reset regression;
-- ASan/UBSan JNI regression;
-- ThreadSanitizer setter/process stress.
+## Verification caveat
 
-Representative previous numerical results included 113.22 dB 9482 STFT/iSTFT SNR, 6.19e-8 correlated-accompaniment relative error, and 5.20e-8 full-chain relative RMS error.
+No current GitHub Actions result is being claimed from this review. The repository changes are implemented and the required CI/instrumentation gates are wired, but the latest head still needs an actual GitHub Actions execution and physical-phone acceptance run before it can honestly be marked fully production-verified.
 
-Those are baseline regression results, not a substitute for the current GitHub CI run.
-
-## Latest repair gate
-
-The current branch includes the ONNX dynamic-batch validation and HTTP 416 download-resume fix. CI must pass the real model smoke test and the Android debug build on this current head before merge.
-
-## Acceptance rule
-
-Do not mark the integration as production-ready until the current GitHub Actions run passes all of the following:
-
-- the real ONNX model smoke test;
-- `gradle :app:testDebugUnitTest`;
-- `gradle :app:assembleDebug`;
-- CI-signed release APK payload/signature verification; and
-- Android instrumentation covering real bundled-model inference, the streaming separator, and the neural-to-Fast Live handoff timeline.
-
-The production `release` variant is wired for environment-provided signing credentials. Real-device testing is still required for final physical-phone performance, long-song stability, thermal throttling, low-memory behavior, pause/resume, seek/stop races, and subjective music-quality acceptance.
+Real-device testing remains required for long songs, thermal throttling, low-memory behavior, pause/resume, seek/stop races, AudioTrack behavior, sustained neural throughput, and subjective vocal-removal quality.
