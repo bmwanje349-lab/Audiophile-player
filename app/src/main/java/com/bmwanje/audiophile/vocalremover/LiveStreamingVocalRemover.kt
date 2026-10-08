@@ -23,8 +23,10 @@ internal class LiveStreamingVocalRemover(
 
     companion object {
         private const val DSP_BLOCK = 8192
-        private const val MIX_QUEUE_INITIAL = 32_768
-        private const val MIX_QUEUE_MAX = 1_048_576
+        // About 8.9 s at 44.1 kHz. This covers normal MDX/resampler
+        // alignment without permitting a minute-scale float queue.
+        private const val MIX_QUEUE_INITIAL = 16_384
+        private const val MIX_QUEUE_MAX = 393_216
     }
 
     private val mixQueue = LiveStereoSampleQueue(MIX_QUEUE_INITIAL, MIX_QUEUE_MAX)
@@ -210,7 +212,8 @@ internal class LiveStreamingVocalRemover(
         mixQueue.clear()
         vocalQueue.clear()
         runCatching { native.close() }
-        runCatching { (runner as? AutoCloseable)?.close() }
+        // The ONNX runner is owned by LiveKaraokeEngine so seek/restart can
+        // reuse its loaded model/session and scratch buffers.
     }
 }
 
