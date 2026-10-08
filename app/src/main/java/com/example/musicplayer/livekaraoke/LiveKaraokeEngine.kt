@@ -81,8 +81,6 @@ class LiveKaraokeEngine(
         const val STARTUP_BUFFER_SECONDS = 30
         const val STARTUP_BUFFER_WINDOWS = 5
         const val AUDIO_TRACK_BUFFER_SECONDS = 6
-        const val RATE_ESTIMATION_MIN_SECONDS = 10.0
-        const val DYNAMIC_HEADROOM_SECONDS = 6.0
         const val UI_UPDATE_INTERVAL_MS = 250L
         const val SEEK_CONTEXT_MARGIN_MS = 100L
     }
@@ -202,11 +200,6 @@ class LiveKaraokeEngine(
         @Volatile
         private var producerFinished = false
 
-        @Volatile
-        private var estimatedProducerRate = Double.NaN
-
-        private var producerRateStartNs = 0L
-        private var producerRateFrames = 0L
         private var lastUiUpdateNs = 0L
 
         private val cancelled = AtomicBoolean(false)
@@ -657,47 +650,29 @@ class LiveKaraokeEngine(
                     .roundToInt()
                     .coerceAtLeast(1)
 
+            /*
+             * Startup is intentionally fixed. The previous implementation
+             * recalculated this target from measured neural throughput and
+             * remaining track duration. On a slower phone that could turn a
+             * 30-second startup budget into 110+ seconds for a 3:32 track.
+             * Worse, the target changed while the producer was already
+             * filling the queue, so the UI appeared to move the goalposts.
+             *
+             * Throughput should affect how quickly the bounded queue refills,
+             * not the startup contract. The queue itself remains bounded by
+             * MAX_LOOKAHEAD_FRAMES once playback begins.
+             */
+            val timeBased =
+                (
+                    sourceSampleRate.toLong() *
+                        STARTUP_BUFFER_SECONDS.toLong()
+                )
+                    .coerceAtMost(Int.MAX_VALUE.toLong())
+                    .toInt()
+
             val windowBased =
                 generatedPerWindow.toLong() *
                     STARTUP_BUFFER_WINDOWS.toLong()
-
-            val remainingSeconds =
-                (
-                    durationMs
-                        .coerceAtLeast(0L)
-                        .minus(playbackStartMs.coerceAtLeast(0L))
-                )
-                    .toDouble() /
-                    1000.0
-
-            val measuredRate =
-                estimatedProducerRate
-                    .takeIf { it.isFinite() && it > 0.0 }
-
-            val deficitSeconds =
-                if (
-                    measuredRate != null &&
-                    remainingSeconds > 0.0 &&
-                    measuredRate < 1.0
-                ) {
-                    remainingSeconds * (1.0 - measuredRate)
-                } else {
-                    0.0
-                }
-
-            val recommendedSeconds =
-                max(
-                    STARTUP_BUFFER_SECONDS.toDouble(),
-                    deficitSeconds + DYNAMIC_HEADROOM_SECONDS,
-                )
-
-            val timeBased =
-                (
-                    sourceSampleRate.toDouble() *
-                        recommendedSeconds
-                )
-                    .roundToInt()
-                    .coerceAtLeast(1)
 
             return min(
                 MAX_LOOKAHEAD_FRAMES,
@@ -705,54 +680,12 @@ class LiveKaraokeEngine(
                     1,
                     max(
                         timeBased,
-                        windowBased.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                        windowBased
+                            .coerceAtMost(Int.MAX_VALUE.toLong())
+                            .toInt(),
                     ),
                 ),
             )
-        }
-
-        private fun noteProducerThroughput(
-            emittedFrames: Int,
-        ) {
-            val now = System.nanoTime()
-
-            if (producerRateStartNs == 0L) {
-                producerRateStartNs = now
-            }
-
-            producerRateFrames += emittedFrames.toLong()
-
-            if (estimatedProducerRate.isFinite()) {
-                return
-            }
-
-            val minimumFrames =
-                (
-                    sourceSampleRate.toDouble() *
-                        RATE_ESTIMATION_MIN_SECONDS
-                )
-                    .roundToInt()
-                    .toLong()
-                    .coerceAtLeast(1L)
-
-            if (producerRateFrames < minimumFrames) {
-                return
-            }
-
-            val elapsedSeconds =
-                (
-                    now - producerRateStartNs
-                ).coerceAtLeast(1L).toDouble() /
-                    1_000_000_000.0
-
-            if (elapsedSeconds <= 0.0) return
-
-            estimatedProducerRate =
-                (
-                    producerRateFrames.toDouble() /
-                        sourceSampleRate.toDouble()
-                ) /
-                    elapsedSeconds
         }
 
         private fun bufferedSeconds(frames: Int): String {
@@ -789,8 +722,6 @@ class LiveKaraokeEngine(
             }
 
             if (count <= 0) return
-
-            noteProducerThroughput(count)
 
             val pcm = ShortArray(count * 2)
             var output = 0
