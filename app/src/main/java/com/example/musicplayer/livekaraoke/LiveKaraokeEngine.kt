@@ -1094,6 +1094,10 @@ class LiveKaraokeEngine(
             var start = 0
             var count = block.size
 
+            // Count every produced frame (including seek preroll that is
+            // dropped below): it is real inference work against the clock.
+            noteProducerThroughput(block.size)
+
             if (droppedPrerollFrames > 0) {
                 val drop =
                     min(
@@ -1106,8 +1110,6 @@ class LiveKaraokeEngine(
             }
 
             if (count <= 0) return
-
-            noteProducerThroughput(count)
 
             val pcm = ShortArray(count * 2)
             var output = 0
