@@ -289,6 +289,11 @@ internal fun liveKaraokePositionMs(
  * The preroll gives the neural window context, then those samples are dropped
  * before playback resumes at the requested position.
  */
+private data class LiveDecodedBlock(
+    val audio: VocalSeparatorCore.Stereo?,
+    val end: Boolean = false,
+)
+
 class LiveKaraokeEngine(
     context: Context,
     private val listener: Listener,
@@ -492,13 +497,8 @@ class LiveKaraokeEngine(
         private var consumerStarted = false
         private var droppedPrerollFrames = 0
 
-        private data class DecodedBlock(
-            val audio: VocalSeparatorCore.Stereo?,
-            val end: Boolean = false,
-        )
-
         private val decodedBlocks =
-            ArrayBlockingQueue<DecodedBlock>(4)
+            ArrayBlockingQueue<LiveDecodedBlock>(4)
 
         fun start() {
             executor =
@@ -743,13 +743,13 @@ class LiveKaraokeEngine(
                     inputFormat = inputFormat,
                 ) { block ->
                     decodedBlocks.put(
-                        DecodedBlock(block)
+                        LiveDecodedBlock(block)
                     )
                 }
 
                 if (!cancelled.get()) {
                     decodedBlocks.put(
-                        DecodedBlock(
+                        LiveDecodedBlock(
                             audio = null,
                             end = true,
                         )
