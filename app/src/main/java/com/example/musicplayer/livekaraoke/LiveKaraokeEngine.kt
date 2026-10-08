@@ -837,9 +837,25 @@ class LiveKaraokeEngine(
                     createAudioTrack(sourceSampleRate)
 
                 executor?.submit(::consume)
+                val activeStreaming =
+                    streaming
+                        ?: error("Live streaming separator was not initialized")
+
                 inferenceFuture =
                     executor?.submit {
-                        inferNeuralBlocks(streaming)
+                        try {
+                            inferNeuralBlocks(activeStreaming)
+                        } finally {
+                            /*
+                             * The inference worker owns the neural separator
+                             * lifetime after submission. This is critical on
+                             * stop/seek: the producer thread may be torn down
+                             * first, but the separator/native DSP must stay
+                             * alive until any in-flight inference/processBlock
+                             * call has actually returned.
+                             */
+                            runCatching { activeStreaming.close() }
+                        }
                     }
 
                 if (isCurrent(id)) {
@@ -895,7 +911,19 @@ class LiveKaraokeEngine(
                 runCatching { decoder?.stop() }
                 runCatching { decoder?.release() }
                 runCatching { extractor?.release() }
-                runCatching { streaming?.close() }
+                /*
+                 * Once the inference task has been submitted, it owns the
+                 * neural separator and closes it in its finally block. Never
+                 * close it here: stop/seek can interrupt this producer while
+                 * ONNX/native processing is still using the same object.
+                 *
+                 * Before submission (for example, a failure while wiring the
+                 * pipeline) no worker owns it yet, so this producer is still
+                 * responsible for cleanup.
+                 */
+                if (inferenceFuture == null) {
+                    runCatching { streaming?.close() }
+                }
                 runCatching { fastDsp?.close() }
                 Log.i(
                     PROFILE_TAG,
