@@ -15,8 +15,19 @@ object MdxModelManager {
 
     fun isInstalled(context: Context, spec: MdxModelSpec): Boolean {
         val f = file(context, spec)
-        return f.isFile && sha256(f) == spec.sha256
+        return f.isFile &&
+            f.length() == spec.fileSizeBytes &&
+            sha256(f) == spec.sha256
     }
+
+    /**
+     * Cheap UI-safe presence check. Full SHA-256 integrity is verified by
+     * [ensureInstalled] before the model is used.
+     */
+    fun isPresent(context: Context, spec: MdxModelSpec): Boolean =
+        file(context, spec).let { f ->
+            f.isFile && f.length() == spec.fileSizeBytes
+        }
 
     fun hasBundledModel(context: Context, spec: MdxModelSpec): Boolean =
         runCatching {
@@ -131,6 +142,9 @@ object MdxModelManager {
 object ModelManager {
     fun isInstalled(context: Context): Boolean =
         MdxModelManager.isInstalled(context, MdxModelSpec.LIGHT_9482)
+
+    fun isPresent(context: Context): Boolean =
+        MdxModelManager.isPresent(context, MdxModelSpec.LIGHT_9482)
 
     fun ensureInstalled(
         context: Context,

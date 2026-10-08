@@ -109,11 +109,41 @@ jobs:
           echo "======================================================"
           exit "$status"
 
-      - name: Upload Debug APK
+      - name: Verify Debug APK payload
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          python3 - <<'PY'
+          import hashlib, zipfile
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          model_sha="f4f365207c56deb115bceedff3ad8fe98a751c745f9e370cecec6226b8b47184"
+          model_size=29704436
+          with zipfile.ZipFile(apk) as z:
+              names=set(z.namelist())
+              model="assets/models/mdx/UVR_MDXNET_9482.onnx"
+              assert model in names, "bundled MDX model missing from APK"
+              data=z.read(model)
+              assert len(data)==model_size, f"model size {len(data)} != {model_size}"
+              assert hashlib.sha256(data).hexdigest()==model_sha, "bundled MDX model SHA-256 mismatch"
+              for abi in ("arm64-v8a","armeabi-v7a","x86_64"):
+                  assert f"lib/{abi}/libaudiophile_vocal_remover.so" in names, f"vocal JNI missing for {abi}"
+                  assert f"lib/{abi}/libonnxruntime.so" in names or any(
+                      n.startswith(f"lib/{abi}/") and "onnxruntime" in n for n in names
+                  ), f"ONNX Runtime native library missing for {abi}"
+          print("APK payload verification passed")
+          PY
+
+      - name: Build unsigned Release APK
+        run: |
+          set -euo pipefail
+          gradle :app:assembleRelease --console=plain --stacktrace --no-daemon
+
+      - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: app-release-unsigned
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
 
       - name: Upload build log

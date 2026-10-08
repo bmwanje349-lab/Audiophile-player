@@ -53,6 +53,8 @@ class VocalRemoverUi(
 
         fun playProcessedUri(uri: Uri)
 
+        fun cancelRender()
+
         fun openBack()
     }
 
@@ -70,7 +72,8 @@ class VocalRemoverUi(
             }
         }
 
-    private var activeJob: Future<*>? = null
+    private var modelJob: Future<*>? = null
+    private var closed = false
     private val bg = Color.rgb(10, 12, 15)
     private val surface = Color.rgb(23, 26, 31)
     private val textColor = Color.rgb(242, 245, 247)
@@ -92,6 +95,7 @@ class VocalRemoverUi(
     private var ceilingDb = -1f
 
     fun build(parent: ViewGroup): View {
+        closed = false
         // Capture the host view context before any helper can run. The UI is
         // constructed top-to-bottom, so no lateinit View should be the source
         // of Context during this phase.
@@ -358,9 +362,11 @@ class VocalRemoverUi(
     }
 
     fun close() {
-        activeJob?.cancel(true)
-        activeJob = null
-
+        closed = true
+        main.removeCallbacksAndMessages(null)
+        modelJob?.cancel(true)
+        modelJob = null
+        host.cancelRender()
         executor.shutdownNow()
     }
 
@@ -379,9 +385,9 @@ class VocalRemoverUi(
         progress.progress = 0
         status.text = "Preparing AI model…"
 
-        activeJob?.cancel(true)
+        modelJob?.cancel(true)
 
-        activeJob =
+        modelJob =
             executor.submit {
                 try {
                     ModelManager.ensureInstalled(context) { done, total ->
@@ -395,6 +401,8 @@ class VocalRemoverUi(
                             }
 
                         main.post {
+                            if (closed) return@post
+
                             progress.progress = percentage
 
                             progressText.text =
@@ -407,6 +415,8 @@ class VocalRemoverUi(
                     }
 
                     main.post {
+                        if (closed) return@post
+
                         progress.visibility = View.GONE
                         status.text = "AI model ready"
                         progressText.text =
@@ -416,6 +426,8 @@ class VocalRemoverUi(
                     }
                 } catch (throwable: Throwable) {
                     main.post {
+                        if (closed) return@post
+
                         progress.visibility = View.GONE
 
                         status.text =
@@ -429,6 +441,8 @@ class VocalRemoverUi(
     }
 
     private fun processCurrentTrack() {
+        if (closed) return
+
         val current =
             host.currentTrack()
                 ?: run {
@@ -438,7 +452,7 @@ class VocalRemoverUi(
 
         updateTrackText(current.title)
 
-        if (!ModelManager.isInstalled(action.context)) {
+        if (!ModelManager.isPresent(action.context)) {
             status.text = "Prepare the AI model first"
             ensureModel()
             return
@@ -451,7 +465,7 @@ class VocalRemoverUi(
         progressText.text = "Waiting for the first MDX-Net chunk…"
         status.text = "Starting bounded streaming render…"
 
-        activeJob?.cancel(true)
+        modelJob?.cancel(true)
 
         /*
          * The actual render now lives entirely in AudioRenderRepository:
@@ -468,6 +482,8 @@ class VocalRemoverUi(
             ceilingDb = ceilingDb,
             onProgress = { fraction ->
                 main.post {
+                    if (closed) return@post
+
                     val percentage =
                         (fraction * 1000f)
                             .toInt()
@@ -487,6 +503,8 @@ class VocalRemoverUi(
             },
             onMdxChunks = { count ->
                 main.post {
+                    if (closed) return@post
+
                     progress.progress = 1000
                     progressText.text =
                         "MDX-Net ONNX chunks executed: " + count
@@ -498,6 +516,8 @@ class VocalRemoverUi(
             },
             onReady = { uri ->
                 main.post {
+                    if (closed) return@post
+
                     progress.visibility = View.GONE
                     status.text = "Instrumental copy ready"
                     action.isEnabled = true
@@ -507,6 +527,8 @@ class VocalRemoverUi(
             },
             onError = { error ->
                 main.post {
+                    if (closed) return@post
+
                     progress.visibility = View.GONE
                     status.text =
                         "Vocal removal failed: " +

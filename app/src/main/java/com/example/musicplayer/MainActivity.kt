@@ -665,7 +665,7 @@ class MainActivity : AppCompatActivity() {
         )))
 
         root.addView(settingsGroup("About", listOf(
-            settingRow("Audiophile Player", "Version 0.3.1 • custom C++ DSP engine", android.R.drawable.ic_menu_info_details) { showInfoDialog("About", "Audiophile Player 0.3.1\n\nCustom audio chain:\nGraphic EQ → Parametric EQ → v10 Stereo Widener.\n\nThe visual theme is Midnight Audiophile.") }
+            settingRow("Audiophile Player", "Version 0.4.0 • custom C++ DSP engine", android.R.drawable.ic_menu_info_details) { showInfoDialog("About", "Audiophile Player 0.4.0\n\nCustom audio chain:\nGraphic EQ → Parametric EQ → v10 Stereo Widener.\n\nThe visual theme is Midnight Audiophile.") }
         )))
 
         scroll.addView(root)

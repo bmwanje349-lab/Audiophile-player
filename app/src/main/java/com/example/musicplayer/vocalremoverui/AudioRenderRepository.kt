@@ -61,15 +61,20 @@ class AudioRenderRepository(
             var track: AudioTrackResources? = null
 
             try {
+                ensureNotInterrupted()
                 val audioTrack = findAudioTrack(uri)
                 track = audioTrack
 
+                ensureNotInterrupted()
                 val localPipeline =
                     pipelineFactory(audioTrack.sampleRate)
                 pipeline = localPipeline
 
+                ensureNotInterrupted()
                 configurePipeline(localPipeline)
+                ensureNotInterrupted()
                 localPipeline.loadModel()
+                ensureNotInterrupted()
 
                 val output =
                     createOutputFile(titleSuffix)
@@ -108,12 +113,12 @@ class AudioRenderRepository(
 
                 ensureNotInterrupted()
                 wavWriter.finish()
-                writer = null
 
                 ensureNotInterrupted()
                 onMdxChunks(renderer.mdxInferenceCount())
                 onProgress(1f)
                 onReady(Uri.fromFile(output))
+                writer = null
             } catch (throwable: Throwable) {
                 if (!Thread.currentThread().isInterrupted) {
                     onError(throwable)
@@ -129,8 +134,7 @@ class AudioRenderRepository(
 
     @Synchronized
     fun cancel() {
-        activeTask?.cancel(true)
-        activeTask = null
+        activeTask?.takeIf { !it.isDone }?.cancel(true)
     }
 
     fun close() {
@@ -203,13 +207,7 @@ class AudioRenderRepository(
         val decoder =
             MediaCodec.createDecoderByType(mime)
 
-        decoder.configure(
-            inputFormat,
-            null,
-            null,
-            0,
-        )
-        decoder.start()
+        var decoderStarted = false
 
         val bufferInfo = MediaCodec.BufferInfo()
 
@@ -237,6 +235,15 @@ class AudioRenderRepository(
         var decodedFrames = 0L
 
         try {
+            decoder.configure(
+                inputFormat,
+                null,
+                null,
+                0,
+            )
+            decoder.start()
+            decoderStarted = true
+
             while (!outputEnded) {
                 ensureNotInterrupted()
                 if (!inputEnded) {
@@ -373,7 +380,9 @@ class AudioRenderRepository(
                 }
             }
         } finally {
-            runCatching { decoder.stop() }
+            if (decoderStarted) {
+                runCatching { decoder.stop() }
+            }
             decoder.release()
         }
     }
