@@ -64,7 +64,7 @@ internal class LiveKaraokeStageProfiler {
         }
     }
 
-    inline fun <T> measure(stage: Stage, block: () -> T): T {
+    fun <T> measure(stage: Stage, block: () -> T): T {
         val start = System.nanoTime()
         return try { block() } finally { record(stage, System.nanoTime() - start) }
     }
