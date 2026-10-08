@@ -390,6 +390,12 @@ class LiveKaraokeEngine(
     }
 
     private val lock = Any()
+    private val runnerCloseExecutor =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "Audiophile-LiveKaraoke-RunnerClose").apply {
+                isDaemon = true
+            }
+        }
     private var session: Session? = null
     private var generation = 0L
     private var closed = false
@@ -398,7 +404,10 @@ class LiveKaraokeEngine(
     fun start(uri: Uri, positionMs: Long = 0L, settings: Settings = Settings()) {
         synchronized(lock) {
             check(!closed) { "Live karaoke engine is closed" }
-            stopLocked(keepNeuralCache = false)
+            // Starting a new track/session must not synchronously destroy the
+            // cached ONNX session. Reuse it so seek/restart stays fast and the
+            // engine lock is never held while ONNX teardown waits on inference.
+            stopLocked(keepNeuralCache = true)
 
             generation += 1L
             val next =
@@ -451,7 +460,9 @@ class LiveKaraokeEngine(
 
     fun stop() {
         synchronized(lock) {
-            stopLocked(keepNeuralCache = false)
+            // Keep the neural cache alive for a later start. Final destruction
+            // is performed only by close(), and then outside the engine lock.
+            stopLocked(keepNeuralCache = true)
             generation += 1L
         }
     }
@@ -462,11 +473,27 @@ class LiveKaraokeEngine(
         }
 
     override fun close() {
+        var runnerToClose: LiveMdxOnnxVocalModelRunner? = null
+
         synchronized(lock) {
             if (closed) return
             closed = true
-            stopLocked(keepNeuralCache = false)
+            stopLocked(keepNeuralCache = true)
+            generation += 1L
+            runnerToClose = cachedLiveRunner
+            cachedLiveRunner = null
         }
+
+        // ONNX Runtime teardown may have to wait for an in-flight session.run().
+        // Never perform that wait while holding the engine lock or on the
+        // service/UI lifecycle thread.
+        runnerToClose?.let { runner ->
+            runCatching { runner.clearProfiler() }
+            runnerCloseExecutor.execute {
+                runCatching { runner.close() }
+            }
+        }
+        runnerCloseExecutor.shutdown()
     }
 
     private fun stopLocked(keepNeuralCache: Boolean = false) {
@@ -499,13 +526,6 @@ class LiveKaraokeEngine(
             cachedLiveRunner = created
             return created
         }
-    }
-
-    private fun closeCachedLiveRunner() {
-        val runner = cachedLiveRunner ?: return
-        cachedLiveRunner = null
-        runCatching { runner.clearProfiler() }
-        runCatching { runner.close() }
     }
 
     private fun isCurrent(id: Long): Boolean =
@@ -564,6 +584,8 @@ class LiveKaraokeEngine(
         private val profiler = LiveKaraokeStageProfiler()
 
         private val cancelled = AtomicBoolean(false)
+        private val paused = AtomicBoolean(false)
+        private val pauseLock = Object()
         private var queue: LivePcmQueue? = null
 
         private var executor: ExecutorService? = null
@@ -609,6 +631,7 @@ class LiveKaraokeEngine(
 
         fun pause() {
             if (cancelled.get()) return
+            paused.set(true)
             audioTrack?.pause()
             state = State.PAUSED
             if (isCurrent(id)) {
@@ -621,6 +644,10 @@ class LiveKaraokeEngine(
 
         fun resume() {
             if (cancelled.get()) return
+            paused.set(false)
+            synchronized(pauseLock) {
+                pauseLock.notifyAll()
+            }
             state =
                 if (consumerStarted) {
                     State.PLAYING
@@ -647,6 +674,10 @@ class LiveKaraokeEngine(
         fun stop() {
             if (!cancelled.compareAndSet(false, true)) return
 
+            paused.set(false)
+            synchronized(pauseLock) {
+                pauseLock.notifyAll()
+            }
             queue?.cancel()
             runCatching { audioTrack?.pause() }
             runCatching { audioTrack?.stop() }
@@ -879,6 +910,14 @@ class LiveKaraokeEngine(
             }
         }
 
+        private fun awaitResumeIfPaused() {
+            synchronized(pauseLock) {
+                while (paused.get() && !cancelled.get()) {
+                    pauseLock.wait(100L)
+                }
+            }
+        }
+
         private fun inferNeuralBlocks(
             separator: LiveStreamingVocalRemover,
         ) {
@@ -892,6 +931,9 @@ class LiveKaraokeEngine(
             var switchedToFallback = false
 
             while (!cancelled.get()) {
+                awaitResumeIfPaused()
+                if (cancelled.get()) return
+
                 val item = decodedBlocks.take()
                 if (item.end) break
 
@@ -1800,6 +1842,8 @@ class LiveKaraokeEngine(
                 !outputEnded &&
                 !cancelled.get()
             ) {
+                awaitResumeIfPaused()
+                if (cancelled.get()) break
                 if (!inputEnded) {
                     val inputIndex =
                         decoder.dequeueInputBuffer(
