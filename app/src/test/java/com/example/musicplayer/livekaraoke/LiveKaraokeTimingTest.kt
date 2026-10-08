@@ -75,6 +75,18 @@ class LiveKaraokeTimingTest {
     }
 
     @Test
+    fun prerollRoundsUpSoPlaybackNeverStartsBeforeTarget() {
+        assertEquals(
+            45,
+            calculateLiveKaraokePrerollFrames(
+                playbackStartMs = 1L,
+                actualDecodeStartUs = 0L,
+                sampleRate = 44_100,
+            ),
+        )
+    }
+
+    @Test
     fun prerollNeverBecomesNegativeWhenDecodeStartsAfterTarget() {
         assertEquals(
             0,
