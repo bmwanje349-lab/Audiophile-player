@@ -407,7 +407,7 @@ class LiveKaraokeEngine(
             // Starting a new track/session must not synchronously destroy the
             // cached ONNX session. Reuse it so seek/restart stays fast and the
             // engine lock is never held while ONNX teardown waits on inference.
-            stopLocked(keepNeuralCache = true)
+            stopLocked()
 
             generation += 1L
             val next =
@@ -438,7 +438,7 @@ class LiveKaraokeEngine(
     fun seekTo(positionMs: Long) {
         synchronized(lock) {
             val current = session ?: return
-            stopLocked(keepNeuralCache = true)
+            stopLocked()
 
             generation += 1L
             val next =
@@ -462,7 +462,7 @@ class LiveKaraokeEngine(
         synchronized(lock) {
             // Keep the neural cache alive for a later start. Final destruction
             // is performed only by close(), and then outside the engine lock.
-            stopLocked(keepNeuralCache = true)
+            stopLocked()
             generation += 1L
         }
     }
@@ -478,7 +478,7 @@ class LiveKaraokeEngine(
         synchronized(lock) {
             if (closed) return
             closed = true
-            stopLocked(keepNeuralCache = true)
+            stopLocked()
             generation += 1L
             runnerToClose = cachedLiveRunner
             cachedLiveRunner = null
@@ -496,12 +496,12 @@ class LiveKaraokeEngine(
         runnerCloseExecutor.shutdown()
     }
 
-    private fun stopLocked(keepNeuralCache: Boolean = false) {
+    private fun stopLocked() {
+        // Session teardown is intentionally non-destructive for the cached
+        // neural runner. The runner is closed only by close(), asynchronously,
+        // after the engine can no longer create another session.
         session?.stop()
         session = null
-        if (!keepNeuralCache) {
-            closeCachedLiveRunner()
-        }
         listener.onState(State.STOPPED, "Live karaoke stopped")
     }
 
