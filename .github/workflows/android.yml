@@ -126,7 +126,7 @@ jobs:
           force-avd-creation: true
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           script: |
-            set -euo pipefail
+            set -eu
             gradle :app:connectedDebugAndroidTest --console=plain --stacktrace --no-daemon
 
       - name: Upload Debug APK
