@@ -62,6 +62,10 @@ class LiveMdxStft(private val spec: MdxModelSpec) {
     private val inverseAccumRight = FloatArray(chunkSize + 2 * centerPad)
     private val inverseEnvelopeLeft = FloatArray(chunkSize + 2 * centerPad)
     private val inverseEnvelopeRight = FloatArray(chunkSize + 2 * centerPad)
+    // Reused across inference windows. MdxSeparatorCore consumes the returned
+    // arrays synchronously before the next model window starts.
+    private val inverseOutLeft = FloatArray(chunkSize)
+    private val inverseOutRight = FloatArray(chunkSize)
 
     init {
         require(n % 2 == 0) { "MDX FFT size must be even" }
@@ -162,21 +166,21 @@ class LiveMdxStft(private val spec: MdxModelSpec) {
             "Expected tensor size ${tensorSize}, got ${spectrogram.data.size}"
         }
 
-        val left =
-            inverseChannel(
-                spectrogram.data,
-                planeBase = 0,
-                accum = inverseAccumLeft,
-                envelope = inverseEnvelopeLeft,
-            )
-        val right =
-            inverseChannel(
-                spectrogram.data,
-                planeBase = 2,
-                accum = inverseAccumRight,
-                envelope = inverseEnvelopeRight,
-            )
-        return MdxStft.StereoChunk(left, right)
+        inverseChannel(
+            spectrogram.data,
+            planeBase = 0,
+            accum = inverseAccumLeft,
+            envelope = inverseEnvelopeLeft,
+            out = inverseOutLeft,
+        )
+        inverseChannel(
+            spectrogram.data,
+            planeBase = 2,
+            accum = inverseAccumRight,
+            envelope = inverseEnvelopeRight,
+            out = inverseOutRight,
+        )
+        return MdxStft.StereoChunk(inverseOutLeft, inverseOutRight)
     }
 
     private fun inverseChannel(
@@ -184,7 +188,8 @@ class LiveMdxStft(private val spec: MdxModelSpec) {
         planeBase: Int,
         accum: FloatArray,
         envelope: FloatArray,
-    ): FloatArray {
+        out: FloatArray,
+    ) {
         /*
          * UVR concatenates [dimF bins] with zeros up to n_fft/2+1 bins, then
          * performs a centered iSTFT. Reuse the large OLA work buffers so each
@@ -240,7 +245,6 @@ class LiveMdxStft(private val spec: MdxModelSpec) {
          * overlap/add is normalized by the sum of squared windows, matching the
          * least-squares normalization used by torch.istft().
          */
-        val out = FloatArray(chunkSize)
         for (i in 0 until chunkSize) {
             val index = i + centerPad
             val denom = envelope[index]
@@ -251,7 +255,6 @@ class LiveMdxStft(private val spec: MdxModelSpec) {
                     0f
                 }
         }
-        return out
     }
 
     private fun reflectPadInto(
