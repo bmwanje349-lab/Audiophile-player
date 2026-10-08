@@ -7,6 +7,7 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
+import android.os.Process
 import com.bmwanje.audiophile.vocalremover.MdxModelSpec
 import com.bmwanje.audiophile.vocalremover.MdxStft
 import com.bmwanje.audiophile.vocalremover.StreamingVocalRemover
@@ -450,6 +451,13 @@ class LiveKaraokeEngine(
         }
 
         private fun consume() {
+            // Keep the audio-feed thread schedulable while ONNX inference is
+            // using multiple CPU workers. This reduces device-side AudioTrack
+            // starvation without changing the neural workload itself.
+            runCatching {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
+            }
+
             try {
                 while (!cancelled.get()) {
                     if (state == State.PAUSED) {
