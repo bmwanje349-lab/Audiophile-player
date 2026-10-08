@@ -1041,7 +1041,6 @@ class MainActivity : AppCompatActivity() {
                     LiveKaraokeActivity.EXTRA_TRACK_URI,
                     uri,
                 )
-                controller?.pause()
             }
 
             item.mediaMetadata.title
@@ -1060,7 +1059,21 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        startActivity(intent)
+        runCatching {
+            startActivity(intent)
+            // LiveKaraokeActivity starts the foreground neural engine immediately.
+            // Pause only after the Activity launch succeeds so a launch failure
+            // never leaves the normal player silently paused.
+            controller?.pause()
+        }.onFailure { throwable ->
+            Log.e("MainActivity", "Unable to launch Live Karaoke", throwable)
+            Toast.makeText(
+                this,
+                "Live Karaoke could not open: " +
+                    (throwable.message ?: throwable.javaClass.simpleName),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
     }
     private fun actionButton(icon: Int, description: String, listener: () -> Unit): ImageButton = ImageButton(this).apply {
         setImageResource(icon)
