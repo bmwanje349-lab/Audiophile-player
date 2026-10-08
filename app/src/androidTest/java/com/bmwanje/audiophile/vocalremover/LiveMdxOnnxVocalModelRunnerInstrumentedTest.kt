@@ -74,7 +74,7 @@ class LiveMdxOnnxVocalModelRunnerInstrumentedTest {
         } finally {
             runner.close()
         }
-
+    }
 
     @Test
     fun bundled9482RunsThroughTheFullStreamingSeparator() {
@@ -171,6 +171,5 @@ class LiveMdxOnnxVocalModelRunnerInstrumentedTest {
             runCatching { streaming.close() }
             runCatching { runner.close() }
         }
-    }
     }
 }
