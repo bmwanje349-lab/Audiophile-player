@@ -78,6 +78,28 @@ internal fun calculateLiveKaraokeStartupBufferFrames(
     )
 }
 
+internal object LiveKaraokePerformancePolicy {
+    /**
+     * Keep the audio look-ahead bounded to a few tens of seconds. The old
+     * 120-second cap could reserve ~20+ MiB of PCM16 stereo by itself, while
+     * neural/STFT buffers already consume tens of MiB.
+     */
+    fun maxLookaheadSeconds(memoryClassMb: Int): Int =
+        when {
+            memoryClassMb <= 192 -> 20
+            memoryClassMb <= 256 -> 24
+            memoryClassMb <= 384 -> 32
+            else -> 48
+        }
+
+    const val MIX_QUEUE_MAX_SAMPLES = 393_216
+    const val AUDIO_TRACK_BUFFER_SECONDS = 2
+    const val STARTUP_BUFFER_SECONDS = 6
+    const val STARTUP_BUFFER_WINDOWS = 1
+    const val MIN_NEURAL_SUSTAINED_RATE = 0.95
+    const val MAX_NEURAL_STARTUP_SECONDS = 18.0
+}
+
 internal fun maxLiveKaraokeLookaheadFrames(
     sourceSampleRate: Int,
     maxLookaheadSeconds: Int = 120,
