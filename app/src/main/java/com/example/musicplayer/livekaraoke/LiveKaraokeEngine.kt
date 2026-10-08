@@ -23,6 +23,52 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
+ * Calculates the fixed startup PCM budget for Live Karaoke.
+ *
+ * This is deliberately independent of neural throughput and remaining-track
+ * duration. Throughput determines how fast the bounded queue can refill after
+ * playback starts; it must never silently increase the startup contract.
+ */
+internal fun calculateLiveKaraokeStartupBufferFrames(
+    sourceSampleRate: Int,
+    generatedPerWindow: Int,
+    startupBufferSeconds: Int,
+    startupBufferWindows: Int,
+    maxLookaheadFrames: Int,
+): Int {
+    require(sourceSampleRate > 0)
+    require(generatedPerWindow > 0)
+    require(startupBufferSeconds > 0)
+    require(startupBufferWindows > 0)
+    require(maxLookaheadFrames > 0)
+
+    val timeBased =
+        (
+            sourceSampleRate.toLong() *
+                startupBufferSeconds.toLong()
+        )
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
+
+    val windowBased =
+        generatedPerWindow.toLong() *
+            startupBufferWindows.toLong()
+
+    return min(
+        maxLookaheadFrames,
+        max(
+            1,
+            max(
+                timeBased,
+                windowBased
+                    .coerceAtMost(Int.MAX_VALUE.toLong())
+                    .toInt(),
+            ),
+        ),
+    )
+}
+
+/**
  * True progressive karaoke path.
  *
  * It reuses the verified MDX-Net + PremiumVocalRemoverDSP pipeline, but sends
@@ -650,41 +696,12 @@ class LiveKaraokeEngine(
                     .roundToInt()
                     .coerceAtLeast(1)
 
-            /*
-             * Startup is intentionally fixed. The previous implementation
-             * recalculated this target from measured neural throughput and
-             * remaining track duration. On a slower phone that could turn a
-             * 30-second startup budget into 110+ seconds for a 3:32 track.
-             * Worse, the target changed while the producer was already
-             * filling the queue, so the UI appeared to move the goalposts.
-             *
-             * Throughput should affect how quickly the bounded queue refills,
-             * not the startup contract. The queue itself remains bounded by
-             * MAX_LOOKAHEAD_FRAMES once playback begins.
-             */
-            val timeBased =
-                (
-                    sourceSampleRate.toLong() *
-                        STARTUP_BUFFER_SECONDS.toLong()
-                )
-                    .coerceAtMost(Int.MAX_VALUE.toLong())
-                    .toInt()
-
-            val windowBased =
-                generatedPerWindow.toLong() *
-                    STARTUP_BUFFER_WINDOWS.toLong()
-
-            return min(
-                MAX_LOOKAHEAD_FRAMES,
-                max(
-                    1,
-                    max(
-                        timeBased,
-                        windowBased
-                            .coerceAtMost(Int.MAX_VALUE.toLong())
-                            .toInt(),
-                    ),
-                ),
+            return calculateLiveKaraokeStartupBufferFrames(
+                sourceSampleRate = sourceSampleRate,
+                generatedPerWindow = generatedPerWindow,
+                startupBufferSeconds = STARTUP_BUFFER_SECONDS,
+                startupBufferWindows = STARTUP_BUFFER_WINDOWS,
+                maxLookaheadFrames = MAX_LOOKAHEAD_FRAMES,
             )
         }
 
