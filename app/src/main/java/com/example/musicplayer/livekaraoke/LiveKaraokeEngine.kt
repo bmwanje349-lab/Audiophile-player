@@ -72,10 +72,15 @@ class LiveKaraokeEngine(
         // playback with only one window leaves no margin for normal phone-side
         // inference jitter, decoder work, GC, or thermal throttling. Keep a
         // multi-window queue and require a real safety buffer before play.
-        const val MAX_LOOKAHEAD_FRAMES = 1_984_500 // ~45 s @ 44.1 kHz
-        const val STARTUP_BUFFER_SECONDS = 18
-        const val STARTUP_BUFFER_WINDOWS = 3
-        const val AUDIO_TRACK_BUFFER_SECONDS = 2
+        // The neural separator is very close to real-time on some phones.
+        // A short queue therefore looks healthy at launch but can still drain
+        // after several inference windows. Keep a deep bounded head-start so
+        // small throughput deficits and transient CPU/GC stalls are absorbed
+        // without ever pausing AudioTrack.
+        const val MAX_LOOKAHEAD_FRAMES = 3_969_000 // ~90 s @ 44.1 kHz
+        const val STARTUP_BUFFER_SECONDS = 30
+        const val STARTUP_BUFFER_WINDOWS = 5
+        const val AUDIO_TRACK_BUFFER_SECONDS = 6
         const val SEEK_CONTEXT_MARGIN_MS = 100L
     }
 
@@ -270,6 +275,15 @@ class LiveKaraokeEngine(
         }
 
         private fun produce() {
+            // Inference is the real-time-critical producer. Give its Java/ONNX
+            // execution thread a favorable priority so short scheduler/GC
+            // interruptions are less likely to drain the live audio headroom.
+            runCatching {
+                Process.setThreadPriority(
+                    Process.THREAD_PRIORITY_MORE_FAVORABLE,
+                )
+            }
+
             var extractor: MediaExtractor? = null
             var decoder: MediaCodec? = null
             var streaming: StreamingVocalRemover? = null
