@@ -86,6 +86,7 @@ class AudioRenderRepository(
                     }
                 streaming = renderer
 
+                ensureNotInterrupted()
                 decodeTrack(
                     extractor = audioTrack.extractor,
                     inputFormat = audioTrack.format,
@@ -94,7 +95,9 @@ class AudioRenderRepository(
                     onProgress = onProgress,
                 )
 
+                ensureNotInterrupted()
                 renderer.finish()
+                ensureNotInterrupted()
                 check(renderer.inputSamples() == wavWriter.framesWritten) {
                     "Input/output frame mismatch: " +
                         renderer.inputSamples() +
@@ -103,9 +106,11 @@ class AudioRenderRepository(
                         " output"
                 }
 
+                ensureNotInterrupted()
                 wavWriter.finish()
                 writer = null
 
+                ensureNotInterrupted()
                 onMdxChunks(renderer.mdxInferenceCount())
                 onProgress(1f)
                 onReady(Uri.fromFile(output))
@@ -233,6 +238,7 @@ class AudioRenderRepository(
 
         try {
             while (!outputEnded) {
+                ensureNotInterrupted()
                 if (!inputEnded) {
                     val inputIndex =
                         decoder.dequeueInputBuffer(10_000)
