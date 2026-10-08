@@ -61,14 +61,18 @@ class AudioRenderRepository(
             var track: AudioTrackResources? = null
 
             try {
+                ensureNotInterrupted()
                 val audioTrack = findAudioTrack(uri)
                 track = audioTrack
 
+                ensureNotInterrupted()
                 val localPipeline =
                     pipelineFactory(audioTrack.sampleRate)
                 pipeline = localPipeline
 
+                ensureNotInterrupted()
                 configurePipeline(localPipeline)
+                ensureNotInterrupted()
                 localPipeline.loadModel()
 
                 val output =
@@ -129,8 +133,7 @@ class AudioRenderRepository(
 
     @Synchronized
     fun cancel() {
-        activeTask?.cancel(true)
-        activeTask = null
+        activeTask?.takeIf { !it.isDone }?.cancel(true)
     }
 
     fun close() {
