@@ -1,6 +1,7 @@
 package com.bmwanje.audiophile.vocalremover
 
 import kotlin.math.min
+import com.example.musicplayer.livekaraoke.LiveKaraokeStageProfiler
 
 /**
  * End-to-end bounded-memory offline neural render.
@@ -11,7 +12,7 @@ import kotlin.math.min
  * DSP then processes small blocks and its fixed latency is removed without
  * ever accumulating a full-song FloatArray.
  */
-class LiveStreamingVocalRemover(
+internal class LiveStreamingVocalRemover(
     private val sampleRate: Int,
     private val runner: MdxSeparatorCore.Runner,
     private val modelSpec: MdxModelSpec,
