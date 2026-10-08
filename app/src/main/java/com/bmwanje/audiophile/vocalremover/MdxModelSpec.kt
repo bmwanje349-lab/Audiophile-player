@@ -20,6 +20,7 @@ enum class MdxModelSpec(
     val hop: Int = 1024,
     val dimT: Int = 256,
     val compensation: Float = 1.0f,
+    val fileSizeBytes: Long,
 ) {
     LIGHT_9482(
         id = "9482",
@@ -29,5 +30,6 @@ enum class MdxModelSpec(
         nFft = 6144,
         dimF = 2048,
         compensation = 1.035f,
+        fileSizeBytes = 29_704_436L,
     ),
 }
