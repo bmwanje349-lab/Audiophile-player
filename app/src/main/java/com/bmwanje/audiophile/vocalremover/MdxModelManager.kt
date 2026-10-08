@@ -70,7 +70,7 @@ object MdxModelManager {
                 val total =
                     runCatching {
                         context.assets.openFd(spec.assetPath).use { it.length }
-                    }.getOrDefault(-1L)
+                    }.getOrDefault(-1L).takeIf { it > 0L } ?: spec.fileSizeBytes
 
                 FileOutputStream(temp, false).use { output ->
                     val buffer = ByteArray(1024 * 1024)
