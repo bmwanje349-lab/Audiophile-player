@@ -1,6 +1,8 @@
 package com.example.musicplayer.livekaraoke
 
 import android.content.Context
+import android.net.Uri
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.bmwanje.audiophile.vocalremover.LiveMdxOnnxVocalModelRunner
@@ -13,6 +15,13 @@ import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
+import java.io.FileOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.runner.RunWith
 import kotlin.math.PI
 import kotlin.math.sin
@@ -24,6 +33,75 @@ class LiveKaraokeAndroidInstrumentationTest {
         get() = InstrumentationRegistry
             .getInstrumentation()
             .targetContext
+
+    @Test
+    fun vocalRemoverActivityLaunchesWithoutCrashing() {
+        ActivityScenario.launch(VocalRemoverActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertTrue(activity.window != null)
+            }
+        }
+    }
+
+    @Test
+    fun fastLivePathReachesAudioTrackPlaybackWithoutFailure() {
+        val wav = File(
+            context.cacheDir,
+            "live-karaoke-runtime-test.wav",
+        )
+        writeTestWav(
+            file = wav,
+            sampleRate = 44_100,
+            durationSeconds = 2,
+        )
+
+        val playing = CountDownLatch(1)
+        val errorRef = AtomicReference<Throwable?>(null)
+
+        val engine =
+            LiveKaraokeEngine(
+                context,
+                object : LiveKaraokeEngine.Listener {
+                    override fun onState(
+                        state: LiveKaraokeEngine.State,
+                        message: String,
+                    ) {
+                        if (state == LiveKaraokeEngine.State.PLAYING) {
+                            playing.countDown()
+                        }
+                    }
+
+                    override fun onProgress(
+                        positionMs: Long,
+                        durationMs: Long,
+                    ) = Unit
+
+                    override fun onError(error: Throwable) {
+                        errorRef.compareAndSet(null, error)
+                        playing.countDown()
+                    }
+
+                    override fun onCompleted() = Unit
+                },
+            )
+
+        try {
+            engine.startForTest(
+                uri = Uri.fromFile(wav),
+                forceDspFallback = true,
+            )
+
+            assertTrue(
+                "Fast Live did not reach AudioTrack playback",
+                playing.await(20, TimeUnit.SECONDS),
+            )
+
+            errorRef.get()?.let { throw AssertionError("Fast Live failed", it) }
+        } finally {
+            engine.close()
+            wav.delete()
+        }
+    }
 
     @Test
     fun bundledMdxModelExecutesThroughAndroidOnnxRuntime() {
@@ -209,5 +287,72 @@ class LiveKaraokeAndroidInstrumentationTest {
             streaming.close()
             fallback.close()
         }
+    }    
+    private fun writeTestWav(
+        file: File,
+        sampleRate: Int,
+        durationSeconds: Int,
+    ) {
+        val frames = sampleRate * durationSeconds
+        val dataBytes = frames * 4
+
+        FileOutputStream(file).use { output ->
+            fun ascii(value: String) {
+                output.write(value.toByteArray(Charsets.US_ASCII))
+            }
+
+            fun intLE(value: Int) {
+                val b =
+                    ByteBuffer
+                        .allocate(4)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+                        .putInt(value)
+                        .array()
+                output.write(b)
+            }
+
+            fun shortLE(value: Int) {
+                val b =
+                    ByteBuffer
+                        .allocate(2)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+                        .putShort(value.toShort())
+                        .array()
+                output.write(b)
+            }
+
+            ascii("RIFF")
+            intLE(36 + dataBytes)
+            ascii("WAVE")
+            ascii("fmt ")
+            intLE(16)
+            shortLE(1)
+            shortLE(2)
+            intLE(sampleRate)
+            intLE(sampleRate * 4)
+            shortLE(4)
+            shortLE(16)
+            ascii("data")
+            intLE(dataBytes)
+
+            val frame = ByteArray(4)
+            for (i in 0 until frames) {
+                val sample =
+                    (
+                        kotlin.math.sin(
+                            2.0 * PI * 440.0 * i / sampleRate
+                        ) * 0.2 * 32767.0
+                    )
+                        .toInt()
+                        .toShort()
+
+                frame[0] = (sample.toInt() and 0xFF).toByte()
+                frame[1] = ((sample.toInt() ushr 8) and 0xFF).toByte()
+                frame[2] = frame[0]
+                frame[3] = frame[1]
+                output.write(frame)
+            }
+        }
     }
+
 }
