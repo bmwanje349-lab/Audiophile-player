@@ -15,8 +15,10 @@ import com.bmwanje.audiophile.vocalremover.VocalRemoverPipeline
 import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.ceil
 import kotlin.math.max
@@ -308,9 +310,13 @@ class LiveKaraokeEngine(
         const val MAX_LOOKAHEAD_SECONDS = 120
         const val STARTUP_BUFFER_SECONDS = 30
         const val STARTUP_BUFFER_WINDOWS = 5
-        const val RATE_ESTIMATION_MIN_SECONDS = 10.0
+        const val RATE_ESTIMATION_MIN_SECONDS = 5.5
         const val LIVE_SAFETY_MARGIN_SECONDS = 6.0
-        const val AUDIO_TRACK_BUFFER_SECONDS = 6
+        const val AUDIO_TRACK_BUFFER_SECONDS = 2
+        const val NEURAL_CALIBRATION_TIMEOUT_MS = 12_000L
+        const val MIN_NEURAL_SUSTAINED_RATE = 0.85
+        const val MAX_NEURAL_STARTUP_SECONDS = 20.0
+        const val DSP_STARTUP_BUFFER_SECONDS = 1
         const val MAX_AUDIO_DRAIN_WAIT_MS = 15_000L
         const val UI_UPDATE_INTERVAL_MS = 250L
         const val SEEK_CONTEXT_MARGIN_MS = 100L
@@ -333,6 +339,7 @@ class LiveKaraokeEngine(
                     uri = uri,
                     requestedPositionMs = positionMs.coerceAtLeast(0L),
                     settings = settings,
+                    forceDspFallback = false,
                 )
             session = next
             next.start()
@@ -363,6 +370,7 @@ class LiveKaraokeEngine(
                     uri = current.uri,
                     requestedPositionMs = positionMs.coerceAtLeast(0L),
                     settings = current.settings,
+                    forceDspFallback = current.forceDspFallback,
                 )
             session = next
             listener.onState(
@@ -411,6 +419,7 @@ class LiveKaraokeEngine(
         val uri: Uri,
         val requestedPositionMs: Long,
         val settings: Settings,
+        val forceDspFallback: Boolean,
     ) {
         @Volatile
         var state: State = State.BUFFERING
@@ -451,15 +460,25 @@ class LiveKaraokeEngine(
         private var queue: LivePcmQueue? = null
 
         private var executor: ExecutorService? = null
+        private var inferenceFuture: Future<*>? = null
         private var audioTrack: AudioTrack? = null
         private var pipeline: VocalRemoverPipeline? = null
+        private var fastDsp: LiveDspFallbackProcessor? = null
         private var consumerStarted = false
         private var droppedPrerollFrames = 0
+
+        private data class DecodedBlock(
+            val audio: VocalSeparatorCore.Stereo?,
+            val end: Boolean = false,
+        )
+
+        private val decodedBlocks =
+            ArrayBlockingQueue<DecodedBlock>(4)
 
         fun start() {
             executor =
                 Executors.newFixedThreadPool(
-                    2,
+                    if (forceDspFallback) 2 else 3,
                 ) { runnable ->
                     Thread(
                         runnable,
@@ -467,7 +486,13 @@ class LiveKaraokeEngine(
                     ).apply { isDaemon = true }
                 }
 
-            executor?.submit(::produce)
+            executor?.submit(
+                if (forceDspFallback) {
+                    ::produceDspFallback
+                } else {
+                    ::produce
+                }
+            )
         }
 
         fun pause() {
@@ -520,6 +545,8 @@ class LiveKaraokeEngine(
         }
 
         private fun produce() {
+            // Neural mode overlaps codec/PCM work with model execution so the
+            // decoder is not sitting idle while ONNX is computing.
             // Inference is the real-time-critical producer. Give its Java/ONNX
             // execution thread a favorable priority so short scheduler/GC
             // interruptions are less likely to drain the live audio headroom.
@@ -627,6 +654,7 @@ class LiveKaraokeEngine(
                         appContext,
                         sourceSampleRate,
                         modelSpec,
+                        cpuThreads = 2,
                     )
                 pipeline = localPipeline
 
@@ -649,22 +677,19 @@ class LiveKaraokeEngine(
                         enqueueInstrumental(block)
                     }
 
-                // Start the throughput clock before the first window is
-                // inferred. Starting it at the first emitted block made the
-                // whole first window (~5.8 s of audio) count as free, which
-                // overestimated the producer rate by up to ~1.7x and so
-                // under-sized the safety buffer.
-                producerRateStartNs = System.nanoTime()
-
                 audioTrack =
                     createAudioTrack(sourceSampleRate)
 
                 executor?.submit(::consume)
+                inferenceFuture =
+                    executor?.submit {
+                        inferNeuralBlocks(streaming)
+                    }
 
                 if (isCurrent(id)) {
                     listener.onState(
                         State.BUFFERING,
-                        "Processing the first MDX window before playback…",
+                        "Preparing Live Karaoke — measuring sustained MDX throughput…",
                     )
                 }
 
@@ -691,11 +716,20 @@ class LiveKaraokeEngine(
                     extractor = extractor,
                     decoder = decoder,
                     inputFormat = inputFormat,
-                    separator = streaming,
-                )
+                ) { block ->
+                    decodedBlocks.put(
+                        DecodedBlock(block)
+                    )
+                }
 
                 if (!cancelled.get()) {
-                    streaming.finish()
+                    decodedBlocks.put(
+                        DecodedBlock(
+                            audio = null,
+                            end = true,
+                        )
+                    )
+                    inferenceFuture?.get()
                     producerFinished = true
                     queue?.finish()
                 }
@@ -706,11 +740,193 @@ class LiveKaraokeEngine(
                 runCatching { decoder?.release() }
                 runCatching { extractor?.release() }
                 runCatching { streaming?.close() }
+                runCatching { fastDsp?.close() }
                 runCatching { pipeline?.close() }
                 pipeline = null
                 // AudioTrack belongs to the consumer once it has been created.
                 // The consumer releases it after the final queued PCM block is
                 // written. Releasing it here would truncate buffered audio.
+                if (!consumerStarted && cancelled.get()) {
+                    releaseAudioTrack()
+                }
+            }
+        }
+
+        private fun inferNeuralBlocks(
+            separator: StreamingVocalRemover,
+        ) {
+            runCatching {
+                Process.setThreadPriority(
+                    Process.THREAD_PRIORITY_MORE_FAVORABLE,
+                )
+            }
+
+            var startedClock = false
+            while (!cancelled.get()) {
+                val item = decodedBlocks.take()
+                if (item.end) break
+
+                val block =
+                    item.audio
+                        ?: error("Decoded block was unexpectedly empty")
+
+                if (!startedClock) {
+                    producerRateStartNs = System.nanoTime()
+                    startedClock = true
+                }
+
+                separator.push(block)
+            }
+
+            if (!cancelled.get()) {
+                separator.finish()
+            }
+        }
+
+        private fun produceDspFallback() {
+            runCatching {
+                Process.setThreadPriority(
+                    Process.THREAD_PRIORITY_MORE_FAVORABLE,
+                )
+            }
+
+            var extractor: MediaExtractor? = null
+            var decoder: MediaCodec? = null
+
+            try {
+                if (!isCurrent(id)) return
+
+                extractor = MediaExtractor()
+                extractor.setDataSource(appContext, uri, null)
+
+                val trackIndex = findAudioTrack(extractor)
+                val inputFormat = extractor.getTrackFormat(trackIndex)
+                extractor.selectTrack(trackIndex)
+
+                sourceSampleRate =
+                    inputFormat.getIntegerSafely(
+                        MediaFormat.KEY_SAMPLE_RATE
+                    ) ?: error("Source sample rate is unavailable")
+
+                queue =
+                    LivePcmQueue(
+                        maxFrames =
+                            maxLiveKaraokeLookaheadFrames(
+                                sourceSampleRate,
+                                MAX_LOOKAHEAD_SECONDS,
+                            ),
+                    )
+
+                durationMs =
+                    (
+                        inputFormat.getLongSafely(
+                            MediaFormat.KEY_DURATION
+                        ) ?: 0L
+                    )
+                        .coerceAtLeast(0L) / 1000L
+
+                playbackStartMs =
+                    requestedPositionMs.coerceIn(
+                        0L,
+                        durationMs.takeIf { it > 0L }
+                            ?: requestedPositionMs,
+                    )
+
+                extractor.seekTo(
+                    max(
+                        0L,
+                        playbackStartMs * 1_000L -
+                            SEEK_CONTEXT_MARGIN_MS * 1_000L,
+                    ),
+                    MediaExtractor.SEEK_TO_PREVIOUS_SYNC,
+                )
+
+                droppedPrerollFrames =
+                    calculateLiveKaraokePrerollFrames(
+                        playbackStartMs = playbackStartMs,
+                        actualDecodeStartUs =
+                            extractor.sampleTime.coerceAtLeast(0L),
+                        sampleRate = sourceSampleRate,
+                    )
+
+                fastDsp =
+                    LiveDspFallbackProcessor(
+                        sampleRate = sourceSampleRate,
+                        settings =
+                            LiveKaraokeSettingsSnapshot(
+                                depth = settings.depth,
+                                focus = settings.focus,
+                                transientProtection =
+                                    settings.transientProtection,
+                                dryWet = settings.dryWet,
+                                stemGainDb = settings.stemGainDb,
+                                outputGainDb = settings.outputGainDb,
+                                ceilingDb = settings.ceilingDb,
+                            ),
+                    ) { block ->
+                        enqueueInstrumental(block)
+                    }
+
+                startupTargetFrames =
+                    (
+                        sourceSampleRate.toLong() *
+                            DSP_STARTUP_BUFFER_SECONDS.toLong()
+                    )
+                        .coerceAtMost(Int.MAX_VALUE.toLong())
+                        .toInt()
+                startupTargetFinalized = true
+
+                audioTrack =
+                    createAudioTrack(sourceSampleRate)
+                executor?.submit(::consume)
+
+                if (isCurrent(id)) {
+                    listener.onState(
+                        State.BUFFERING,
+                        "Fast Live mode — avoiding a long neural prebuffer on this device.",
+                    )
+                }
+
+                val mime =
+                    inputFormat.getString(
+                        MediaFormat.KEY_MIME
+                    ) ?: error("Audio MIME type is missing")
+
+                require(mime.startsWith("audio/")) {
+                    "Selected track is not audio: $mime"
+                }
+
+                decoder =
+                    MediaCodec.createDecoderByType(mime)
+                decoder.configure(
+                    inputFormat,
+                    null,
+                    null,
+                    0,
+                )
+                decoder.start()
+
+                decodeLoop(
+                    extractor = extractor,
+                    decoder = decoder,
+                    inputFormat = inputFormat,
+                ) { block ->
+                    fastDsp?.push(block)
+                }
+
+                if (!cancelled.get()) {
+                    fastDsp?.finish()
+                    producerFinished = true
+                    queue?.finish()
+                }
+            } catch (throwable: Throwable) {
+                fail(throwable)
+            } finally {
+                runCatching { decoder?.stop() }
+                runCatching { decoder?.release() }
+                runCatching { extractor?.release() }
+                runCatching { fastDsp?.close() }
+                fastDsp = null
                 if (!consumerStarted && cancelled.get()) {
                     releaseAudioTrack()
                 }
@@ -736,7 +952,17 @@ class LiveKaraokeEngine(
                         val buffered =
                             queue?.availableFrames() ?: 0
                         val required =
-                            initialBufferFrames()
+                            try {
+                                initialBufferFrames()
+                            } catch (tooSlow: NeuralLiveNotViableException) {
+                                restartAsDspFallback(
+                                    id = id,
+                                    reason =
+                                        tooSlow.message
+                                            ?: "Neural Live Karaoke is too slow on this device.",
+                                )
+                                return
+                            }
                         val ready =
                             if (producerFinished) {
                                 // Even with nothing buffered (very short or
@@ -758,14 +984,35 @@ class LiveKaraokeEngine(
                                     UI_UPDATE_INTERVAL_MS * 1_000_000L
 
                             if (
+                                !forceDspFallback &&
+                                !startupTargetFinalized &&
+                                producerRateStartNs > 0L &&
+                                nowNs - producerRateStartNs >=
+                                    NEURAL_CALIBRATION_TIMEOUT_MS * 1_000_000L
+                            ) {
+                                restartAsDspFallback(
+                                    id = id,
+                                    reason =
+                                        "MDX-Net did not reach a safe real-time rate during calibration.",
+                                )
+                                return
+                            }
+
+                            if (
                                 shouldUpdateUi &&
                                 isCurrent(id)
                             ) {
                                 lastUiUpdateNs = nowNs
                                 listener.onState(
                                     State.BUFFERING,
-                                    if (startupTargetFinalized) {
-                                        "Building a safe instrumental buffer — " +
+                                    if (forceDspFallback) {
+                                        "Fast Live — " +
+                                            bufferedSeconds(buffered) +
+                                            " / " +
+                                            bufferedSeconds(required) +
+                                            " s"
+                                    } else if (startupTargetFinalized) {
+                                        "Building a safe neural buffer — " +
                                             bufferedSeconds(buffered) +
                                             " / " +
                                             bufferedSeconds(required) +
@@ -793,7 +1040,11 @@ class LiveKaraokeEngine(
                         if (isCurrent(id)) {
                             listener.onState(
                                 State.PLAYING,
-                                "Live karaoke playing — MDX-Net is processing ahead",
+                                if (forceDspFallback) {
+                                    "Live karaoke playing — fast local vocal suppression"
+                                } else {
+                                    "Live karaoke playing — MDX-Net is processing ahead"
+                                },
                             )
                         }
                     }
@@ -961,6 +1212,15 @@ class LiveKaraokeEngine(
         }
 
         private fun initialBufferFrames(): Int {
+            if (forceDspFallback) {
+                return (
+                    sourceSampleRate.toLong() *
+                        DSP_STARTUP_BUFFER_SECONDS.toLong()
+                )
+                    .coerceAtMost(Int.MAX_VALUE.toLong())
+                    .toInt()
+            }
+
             val generatedPerWindow =
                 (
                     MdxStft(modelSpec)
@@ -1005,7 +1265,7 @@ class LiveKaraokeEngine(
                     .toDouble() /
                     1000.0
 
-            startupTargetFrames =
+            val target =
                 calculateLiveKaraokeSafeBufferFrames(
                     sourceSampleRate = sourceSampleRate,
                     generatedPerWindow = generatedPerWindow,
@@ -1016,6 +1276,25 @@ class LiveKaraokeEngine(
                     safetyMarginSeconds = LIVE_SAFETY_MARGIN_SECONDS,
                     maxLookaheadFrames = maxLookaheadFrames,
                 )
+
+            val targetSeconds =
+                target.toDouble() /
+                    sourceSampleRate.toDouble()
+
+            if (
+                measuredRate < MIN_NEURAL_SUSTAINED_RATE ||
+                targetSeconds > MAX_NEURAL_STARTUP_SECONDS
+            ) {
+                throw NeuralLiveNotViableException(
+                    "Measured MDX-Net rate is %.2fx real-time; neural startup would require %.1f s."
+                        .format(
+                            measuredRate,
+                            targetSeconds,
+                        )
+                )
+            }
+
+            startupTargetFrames = target
             startupTargetFinalized = true
             return startupTargetFrames
         }
@@ -1070,6 +1349,44 @@ class LiveKaraokeEngine(
              * next time the consumer checks it. Never mutate the target after
              * playback has started.
              */
+        }
+
+        private fun restartAsDspFallback(
+            id: Long,
+            reason: String,
+        ) {
+            synchronized(lock) {
+                val current = session
+                if (
+                    closed ||
+                    current == null ||
+                    current.id != id ||
+                    generation != id
+                ) {
+                    return
+                }
+
+                current.stop()
+                generation += 1L
+
+                val next =
+                    Session(
+                        id = generation,
+                        uri = current.uri,
+                        requestedPositionMs =
+                            current.playbackStartMs.coerceAtLeast(0L),
+                        settings = current.settings,
+                        forceDspFallback = true,
+                    )
+
+                session = next
+
+                listener.onState(
+                    State.BUFFERING,
+                    reason + " Switching to Fast Live — no multi-minute prebuffer.",
+                )
+                next.start()
+            }
         }
 
         private fun bufferedSeconds(frames: Int): String {
@@ -1128,7 +1445,7 @@ class LiveKaraokeEngine(
             extractor: MediaExtractor,
             decoder: MediaCodec,
             inputFormat: MediaFormat,
-            separator: StreamingVocalRemover,
+            onPcmBlock: (VocalSeparatorCore.Stereo) -> Unit,
         ) {
             val bufferInfo = MediaCodec.BufferInfo()
             var inputEnded = false
@@ -1279,7 +1596,7 @@ class LiveKaraokeEngine(
                                     buffer = duplicate,
                                     encoding = encoding,
                                     channels = decoderChannels,
-                                    separator = separator,
+                                    onPcmBlock = onPcmBlock,
                                 )
                             }
 
@@ -1307,7 +1624,7 @@ class LiveKaraokeEngine(
             buffer: ByteBuffer,
             encoding: Int,
             channels: Int,
-            separator: StreamingVocalRemover,
+            onPcmBlock: (VocalSeparatorCore.Stereo) -> Unit,
         ) {
             require(channels > 0)
 
@@ -1384,7 +1701,7 @@ class LiveKaraokeEngine(
                     }
                 }
 
-                separator.push(
+                onPcmBlock(
                     VocalSeparatorCore.Stereo(
                         left,
                         right,
