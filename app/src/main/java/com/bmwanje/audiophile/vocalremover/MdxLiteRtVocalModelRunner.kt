@@ -5,8 +5,7 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import java.nio.FloatBuffer
 
 /**
  * ONNX Runtime runner for the verified UVR MDX-Net 9482 model.
@@ -27,27 +26,6 @@ class MdxOnnxVocalModelRunner(
     private val inputName: String
     private val outputName: String
     private val xnnpackEnabled: Boolean
-    private val inputShape =
-        longArrayOf(
-            1L,
-            4L,
-            modelSpec.dimF.toLong(),
-            modelSpec.dimT.toLong(),
-        )
-
-    /*
-     * Keep one tensor-sized heap scratch buffer and one direct FloatBuffer.
-     * ONNX Runtime can otherwise allocate/copy a direct buffer internally for
-     * each non-direct FloatBuffer input.
-     */
-    private val inputScratch = FloatArray(stft.tensorSize())
-    private val directInput =
-        ByteBuffer
-            .allocateDirect(stft.tensorSize() * java.lang.Float.BYTES)
-            .order(ByteOrder.nativeOrder())
-            .asFloatBuffer()
-    private val outputScratch = FloatArray(stft.tensorSize())
-
     private var inferenceCounter = 0L
 
     init {
@@ -143,12 +121,10 @@ class MdxOnnxVocalModelRunner(
         require(left.size == stft.chunkSizeSamples())
         require(right.size == stft.chunkSizeSamples())
 
-        stft.forwardInto(left, right, inputScratch)
-        directInput.clear()
-        directInput.put(inputScratch)
-        directInput.flip()
+        val input = stft.forward(left, right)
+        val shape = longArrayOf(1L, 4L, modelSpec.dimF.toLong(), modelSpec.dimT.toLong())
 
-        OnnxTensor.createTensor(environment, directInput, inputShape).use { tensor ->
+        OnnxTensor.createTensor(environment, FloatBuffer.wrap(input.data), shape).use { tensor ->
             session.run(mapOf(inputName to tensor)).use { result ->
                 val value = result[outputName].orElseThrow {
                     IllegalStateException("9482 ONNX output '$outputName' is missing")
@@ -157,18 +133,15 @@ class MdxOnnxVocalModelRunner(
                     ?: error("9482 ONNX output is not a tensor")
                 val outputBuffer = outputTensor.getFloatBuffer()
                     ?: error("9482 ONNX output is not float-compatible")
+                val output = FloatArray(outputBuffer.remaining()).also { outputBuffer.get(it) }
 
-                require(outputBuffer.remaining() == outputScratch.size) {
-                    "Unexpected MDX output size: " + outputBuffer.remaining() +
-                        " != " + outputScratch.size
+                require(output.size == stft.tensorSize()) {
+                    "Unexpected MDX output size: " + output.size +
+                        " != " + stft.tensorSize()
                 }
-                outputBuffer.get(outputScratch, 0, outputScratch.size)
 
                 inferenceCounter += 1L
-                val (vocL, vocR) =
-                    stft.inverse(
-                        MdxStft.Spectrogram(outputScratch)
-                    )
+                val (vocL, vocR) = stft.inverse(MdxStft.Spectrogram(output))
                 return MdxStft.StereoChunk(vocL, vocR)
             }
         }
@@ -184,7 +157,12 @@ class MdxOnnxVocalModelRunner(
         val tensorInfo = info as? TensorInfo
             ?: error("9482 ONNX " + role + " is not a tensor")
 
-        val expectedShape = inputShape
+        val expectedShape = longArrayOf(
+            1L,
+            4L,
+            modelSpec.dimF.toLong(),
+            modelSpec.dimT.toLong(),
+        )
         val actualShape = tensorInfo.getShape()
 
         require(
