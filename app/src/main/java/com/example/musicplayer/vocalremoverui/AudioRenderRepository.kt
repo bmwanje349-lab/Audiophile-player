@@ -206,13 +206,7 @@ class AudioRenderRepository(
         val decoder =
             MediaCodec.createDecoderByType(mime)
 
-        decoder.configure(
-            inputFormat,
-            null,
-            null,
-            0,
-        )
-        decoder.start()
+        var decoderStarted = false
 
         val bufferInfo = MediaCodec.BufferInfo()
 
@@ -240,6 +234,15 @@ class AudioRenderRepository(
         var decodedFrames = 0L
 
         try {
+            decoder.configure(
+                inputFormat,
+                null,
+                null,
+                0,
+            )
+            decoder.start()
+            decoderStarted = true
+
             while (!outputEnded) {
                 ensureNotInterrupted()
                 if (!inputEnded) {
@@ -376,7 +379,9 @@ class AudioRenderRepository(
                 }
             }
         } finally {
-            runCatching { decoder.stop() }
+            if (decoderStarted) {
+                runCatching { decoder.stop() }
+            }
             decoder.release()
         }
     }
