@@ -15,6 +15,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 
 /**
  * Bounded-memory offline audio renderer for the AI Vocal Remover.
@@ -35,6 +36,10 @@ class AudioRenderRepository(
             }
         }
 
+    @Volatile
+    private var activeTask: Future<*>? = null
+
+    @Synchronized
     fun renderVocalRemovalToWav(
         uri: Uri,
         titleSuffix: String,
@@ -45,7 +50,11 @@ class AudioRenderRepository(
         onReady: (Uri) -> Unit,
         onError: (Throwable) -> Unit,
     ) {
-        executor.execute {
+        if (activeTask?.isDone == false) {
+            throw IllegalStateException("A vocal-removal render is already running")
+        }
+
+        activeTask = executor.submit {
             var pipeline: VocalRemoverPipeline? = null
             var streaming: StreamingVocalRemover? = null
             var writer: StreamingWavWriter? = null
@@ -77,6 +86,7 @@ class AudioRenderRepository(
                     }
                 streaming = renderer
 
+                ensureNotInterrupted()
                 decodeTrack(
                     extractor = audioTrack.extractor,
                     inputFormat = audioTrack.format,
@@ -85,7 +95,9 @@ class AudioRenderRepository(
                     onProgress = onProgress,
                 )
 
+                ensureNotInterrupted()
                 renderer.finish()
+                ensureNotInterrupted()
                 check(renderer.inputSamples() == wavWriter.framesWritten) {
                     "Input/output frame mismatch: " +
                         renderer.inputSamples() +
@@ -94,14 +106,18 @@ class AudioRenderRepository(
                         " output"
                 }
 
+                ensureNotInterrupted()
                 wavWriter.finish()
                 writer = null
 
+                ensureNotInterrupted()
                 onMdxChunks(renderer.mdxInferenceCount())
                 onProgress(1f)
                 onReady(Uri.fromFile(output))
             } catch (throwable: Throwable) {
-                onError(throwable)
+                if (!Thread.currentThread().isInterrupted) {
+                    onError(throwable)
+                }
             } finally {
                 runCatching { streaming?.close() }
                 runCatching { pipeline?.close() }
@@ -111,8 +127,21 @@ class AudioRenderRepository(
         }
     }
 
+    @Synchronized
+    fun cancel() {
+        activeTask?.cancel(true)
+        activeTask = null
+    }
+
     fun close() {
+        cancel()
         executor.shutdownNow()
+    }
+
+    private fun ensureNotInterrupted() {
+        check(!Thread.currentThread().isInterrupted) {
+            "Vocal-removal render cancelled"
+        }
     }
 
     private fun findAudioTrack(uri: Uri): AudioTrackResources {
@@ -209,6 +238,7 @@ class AudioRenderRepository(
 
         try {
             while (!outputEnded) {
+                ensureNotInterrupted()
                 if (!inputEnded) {
                     val inputIndex =
                         decoder.dequeueInputBuffer(10_000)

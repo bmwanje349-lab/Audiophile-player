@@ -56,11 +56,19 @@ object MdxModelManager {
 
         try {
             context.assets.open(spec.assetPath).use { input ->
-                val total = input.available().toLong().takeIf { it > 0L } ?: -1L
+                val total =
+                    runCatching {
+                        context.assets.openFd(spec.assetPath).use { it.length }
+                    }.getOrDefault(-1L)
+
                 FileOutputStream(temp, false).use { output ->
                     val buffer = ByteArray(1024 * 1024)
                     var done = 0L
                     while (true) {
+                        if (Thread.currentThread().isInterrupted) {
+                            throw InterruptedException("Model installation cancelled")
+                        }
+
                         val n = input.read(buffer)
                         if (n < 0) break
                         if (n == 0) continue
@@ -87,6 +95,10 @@ object MdxModelManager {
                     "Cannot finalize bundled MDX model"
                 }
             }
+        } catch (e: InterruptedException) {
+            temp.delete()
+            Thread.currentThread().interrupt()
+            throw e
         } catch (e: java.io.FileNotFoundException) {
             temp.delete()
             throw IllegalStateException(
