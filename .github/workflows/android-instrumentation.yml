@@ -63,7 +63,6 @@ jobs:
           force-avd-creation: true
           emulator-boot-timeout: 600
           disable-linux-hw-accel: auto
-          disable-linux-hw-accel: false
           disable-animations: true
           emulator-options: >-
             -no-window
