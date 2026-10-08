@@ -936,7 +936,9 @@ class LiveKaraokeEngine(
                             ),
                     ) { block ->
                         enqueueInstrumental(block)
-                    }
+                    },
+                        profiler = profiler,
+                    )
 
                 startupTargetFrames =
                     (
