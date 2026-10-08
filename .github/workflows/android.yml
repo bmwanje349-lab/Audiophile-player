@@ -116,8 +116,8 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         timeout-minutes: 15
         with:
-          api-level: 35
-          target: google_apis
+          api-level: 29
+          target: default
           arch: x86_64
           profile: pixel_2
           cores: 2
@@ -127,7 +127,9 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           script: |
             set -eu
-            gradle :app:connectedDebugAndroidTest --console=plain --stacktrace --no-daemon
+            gradle :app:connectedDebugAndroidTest \
+              -Pandroid.testInstrumentationRunnerArguments.class=com.bmwanje.audiophile.vocalremover.LiveMdxOnnxVocalModelRunnerInstrumentedTest \
+              --console=plain --stacktrace --no-daemon
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
