@@ -29,6 +29,8 @@ internal class LiveMdxOnnxVocalModelRunner(
     private val inputName: String
     private val outputName: String
     private val xnnpackEnabled: Boolean
+    @Volatile
+    private var profilerRef: LiveKaraokeStageProfiler? = profiler
     private val inputShape =
         longArrayOf(
             1L,
@@ -147,7 +149,7 @@ internal class LiveMdxOnnxVocalModelRunner(
 
         val stftStart = System.nanoTime()
         stft.forwardInto(left, right, inputScratch)
-        profiler?.record(LiveKaraokeStageProfiler.Stage.MDX_STFT, System.nanoTime() - stftStart)
+        profilerRef?.record(LiveKaraokeStageProfiler.Stage.MDX_STFT, System.nanoTime() - stftStart)
         directInput.clear()
         directInput.put(inputScratch)
         directInput.flip()
@@ -163,7 +165,7 @@ internal class LiveMdxOnnxVocalModelRunner(
                 val outputBuffer = outputTensor.getFloatBuffer()
                     ?: error("9482 ONNX output is not float-compatible")
 
-                profiler?.record(LiveKaraokeStageProfiler.Stage.ONNX_INFERENCE, System.nanoTime() - inferenceStart)
+                profilerRef?.record(LiveKaraokeStageProfiler.Stage.ONNX_INFERENCE, System.nanoTime() - inferenceStart)
                 require(outputBuffer.remaining() == outputScratch.size) {
                     "Unexpected MDX output size: " + outputBuffer.remaining() +
                         " != " + outputScratch.size
@@ -176,7 +178,7 @@ internal class LiveMdxOnnxVocalModelRunner(
                     stft.inverse(
                         LiveMdxStft.Spectrogram(outputScratch)
                     )
-                profiler?.record(LiveKaraokeStageProfiler.Stage.MDX_ISTFT, System.nanoTime() - istftStart)
+                profilerRef?.record(LiveKaraokeStageProfiler.Stage.MDX_ISTFT, System.nanoTime() - istftStart)
                 return MdxStft.StereoChunk(vocL, vocR)
             }
         }
@@ -187,6 +189,11 @@ internal class LiveMdxOnnxVocalModelRunner(
 
     fun inferenceBackend(): String =
         if (xnnpackEnabled) "XNNPACK" else "CPU"
+
+    /** Attach the current live-session profiler without rebuilding the ONNX session. */
+    fun setProfiler(profiler: LiveKaraokeStageProfiler?) {
+        profilerRef = profiler
+    }
 
     private fun validateTensor(role: String, info: ai.onnxruntime.ValueInfo?) {
         val tensorInfo = info as? TensorInfo
@@ -212,8 +219,13 @@ internal class LiveMdxOnnxVocalModelRunner(
         }
     }
 
+    fun clearProfiler() {
+        profilerRef = null
+    }
+
     @Synchronized
     override fun close() {
+        profilerRef = null
         runCatching { session.close() }
             .also { runCatching { sessionOptions.close() } }
     }
