@@ -109,6 +109,13 @@ jobs:
           echo "======================================================"
           exit "$status"
 
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
       - name: Verify Debug APK payload
         run: |
           set -euo pipefail
