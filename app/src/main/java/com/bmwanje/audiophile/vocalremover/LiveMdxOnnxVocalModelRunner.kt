@@ -15,7 +15,7 @@ import com.example.musicplayer.livekaraoke.LiveKaraokeStageProfiler
  * The legacy filename remains for source compatibility, but there is no
  * LiteRT dependency or execution path in this implementation.
  */
-class LiveMdxOnnxVocalModelRunner(
+internal class LiveMdxOnnxVocalModelRunner(
     modelPath: String,
     private val modelSpec: MdxModelSpec,
     cpuThreads: Int = 4,
