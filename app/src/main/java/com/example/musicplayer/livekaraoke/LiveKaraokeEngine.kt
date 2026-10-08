@@ -21,13 +21,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /**
- * Calculates the fixed startup PCM budget for Live Karaoke.
+ * Calculates the fixed minimum startup PCM budget for Live Karaoke.
  *
- * This is deliberately independent of neural throughput and remaining-track
- * duration. Throughput determines how fast the bounded queue can refill after
- * playback starts; it must never silently increase the startup contract.
+ * A second, one-time safety calculation may increase this minimum when the
+ * measured neural producer is slower than real time. That safety target is
+ * frozen before playback begins, so it cannot move underneath the user.
  */
 internal fun calculateLiveKaraokeStartupBufferFrames(
     sourceSampleRate: Int,
@@ -488,27 +489,27 @@ class LiveKaraokeEngine(
                             ?: requestedPositionMs,
                     )
 
-                val modelWindowMs =
+                val modelWindowUs =
                     (
                         MdxStft(modelSpec)
                             .chunkSizeSamples()
                             .toDouble() /
                             MdxStft.SAMPLE_RATE.toDouble() *
-                            1000.0
+                            1_000_000.0
                     )
-                        .roundToInt()
-                        .coerceAtLeast(1)
+                        .roundToLong()
+                        .coerceAtLeast(1L)
 
-                val requestedDecodeStart =
+                val requestedDecodeStartUs =
                     max(
                         0L,
-                        playbackStartMs -
-                            modelWindowMs.toLong() -
-                            SEEK_CONTEXT_MARGIN_MS,
+                        playbackStartMs * 1_000L -
+                            modelWindowUs -
+                            SEEK_CONTEXT_MARGIN_MS * 1_000L,
                     )
 
                 extractor.seekTo(
-                    requestedDecodeStart * 1000L,
+                    requestedDecodeStartUs,
                     MediaExtractor.SEEK_TO_PREVIOUS_SYNC,
                 )
 
@@ -518,14 +519,21 @@ class LiveKaraokeEngine(
                             .coerceAtLeast(0L) / 1000L
                     )
 
+                val actualDecodeStartUs =
+                    extractor.sampleTime.coerceAtLeast(0L)
+
+                val prerollUs =
+                    (
+                        playbackStartMs * 1_000L -
+                            actualDecodeStartUs
+                    )
+                        .coerceAtLeast(0L)
+
                 droppedPrerollFrames =
                     (
-                        (
-                            playbackStartMs -
-                                actualDecodeStartMs
-                        ).toDouble() *
+                        prerollUs.toDouble() *
                             sourceSampleRate.toDouble() /
-                            1000.0
+                            1_000_000.0
                     )
                         .roundToInt()
                         .coerceAtLeast(0)
