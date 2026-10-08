@@ -16,6 +16,7 @@ import com.bmwanje.audiophile.vocalremover.MdxModelManager
 import com.bmwanje.audiophile.vocalremover.MdxModelSpec
 import com.bmwanje.audiophile.vocalremover.MdxStft
 import com.bmwanje.audiophile.vocalremover.NativeVocalRemover
+import com.example.musicplayer.livekaraoke.LiveStreamingVocalRemover
 import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -609,7 +610,7 @@ class LiveKaraokeEngine(
 
             var extractor: MediaExtractor? = null
             var decoder: MediaCodec? = null
-            var streaming: StreamingVocalRemover? = null
+            var streaming: LiveStreamingVocalRemover? = null
 
             try {
                 if (!isCurrent(id)) return
@@ -700,36 +701,50 @@ class LiveKaraokeEngine(
                     )
                 }
 
-                val localPipeline =
-                    VocalRemoverPipeline(
+                val modelFile =
+                    MdxModelManager.ensureInstalled(
                         appContext,
-                        sourceSampleRate,
                         modelSpec,
+                    )
+
+                val native =
+                    NativeVocalRemover(sourceSampleRate).apply {
+                        reset()
+                        setDepth(settings.depth)
+                        setFocus(settings.focus)
+                        setTransientProtection(settings.transientProtection)
+                        setDryWet(settings.dryWet)
+                        setStemGainDb(settings.stemGainDb)
+                        setOutputGainDb(settings.outputGainDb)
+                        setCeilingDb(settings.ceilingDb)
+                    }
+
+                val liveRunner =
+                    LiveMdxOnnxVocalModelRunner(
+                        modelPath = modelFile.absolutePath,
+                        modelSpec = modelSpec,
                         cpuThreads =
                             recommendedLiveKaraokeCpuThreads(
                                 Runtime.getRuntime().availableProcessors(),
                             ),
+                        profiler = profiler,
                     )
-                pipeline = localPipeline
 
-                localPipeline.setDepth(settings.depth)
-                localPipeline.setFocus(settings.focus)
-                localPipeline.setTransientProtection(
-                    settings.transientProtection
-                )
-                localPipeline.setDryWet(settings.dryWet)
-                localPipeline.setStemGainDb(settings.stemGainDb)
-                localPipeline.setOutputGainDb(settings.outputGainDb)
-                localPipeline.setCeilingDb(settings.ceilingDb)
-
-                localPipeline.loadModel()
-
-                if (!isCurrent(id)) return
+                if (!isCurrent(id)) {
+                    runCatching { liveRunner.close() }
+                    runCatching { native.close() }
+                    return
+                }
 
                 streaming =
-                    localPipeline.startStreaming { block ->
-                        enqueueInstrumental(block)
-                    }
+                    LiveStreamingVocalRemover(
+                        sampleRate = sourceSampleRate,
+                        runner = liveRunner,
+                        modelSpec = modelSpec,
+                        native = native,
+                        emit = { block -> enqueueInstrumental(block) },
+                        profiler = profiler,
+                    )
 
                 audioTrack =
                     createAudioTrack(sourceSampleRate)
@@ -795,8 +810,10 @@ class LiveKaraokeEngine(
                 runCatching { extractor?.release() }
                 runCatching { streaming?.close() }
                 runCatching { fastDsp?.close() }
-                runCatching { pipeline?.close() }
-                pipeline = null
+                Log.i(
+                    PROFILE_TAG,
+                    profiler.report(sourceSampleRate),
+                )
                 // AudioTrack belongs to the consumer once it has been created.
                 // The consumer releases it after the final queued PCM block is
                 // written. Releasing it here would truncate buffered audio.
@@ -807,7 +824,7 @@ class LiveKaraokeEngine(
         }
 
         private fun inferNeuralBlocks(
-            separator: StreamingVocalRemover,
+            separator: LiveStreamingVocalRemover,
         ) {
             runCatching {
                 Process.setThreadPriority(
