@@ -33,6 +33,7 @@ class VocalRemoverActivity :
     companion object {
         const val EXTRA_TRACK_URI = "extra_track_uri"
         const val EXTRA_TRACK_TITLE = "extra_track_title"
+        private const val TAG = "VocalRemoverActivity"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -186,25 +187,25 @@ class VocalRemoverActivity :
 
         runCatching {
             repository.renderVocalRemovalToWav(
-            uri = source.uri,
-            titleSuffix = titleSuffix,
-            pipelineFactory = { sampleRate ->
-                com.bmwanje.audiophile.vocalremover.VocalRemoverPipeline(
-                    this,
-                    sampleRate,
-                )
-            },
-            configurePipeline = { pipeline ->
-                pipeline.setDepth(depth)
-                pipeline.setFocus(focus)
-                pipeline.setTransientProtection(transientProtection)
-                pipeline.setDryWet(dryWet)
-                pipeline.setStemGainDb(stemGainDb)
-                pipeline.setOutputGainDb(outputGainDb)
-                pipeline.setCeilingDb(ceilingDb)
-            },
-            onProgress = onProgress,
-            onMdxChunks = onMdxChunks,
+                uri = source.uri,
+                titleSuffix = titleSuffix,
+                pipelineFactory = { sampleRate ->
+                    com.bmwanje.audiophile.vocalremover.VocalRemoverPipeline(
+                        this,
+                        sampleRate,
+                    )
+                },
+                configurePipeline = { pipeline ->
+                    pipeline.setDepth(depth)
+                    pipeline.setFocus(focus)
+                    pipeline.setTransientProtection(transientProtection)
+                    pipeline.setDryWet(dryWet)
+                    pipeline.setStemGainDb(stemGainDb)
+                    pipeline.setOutputGainDb(outputGainDb)
+                    pipeline.setCeilingDb(ceilingDb)
+                },
+                onProgress = onProgress,
+                onMdxChunks = onMdxChunks,
                 onReady = onReady,
                 onError = onError,
             )
@@ -302,10 +303,4 @@ class VocalRemoverActivity :
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
-
-    companion object {
-        const val EXTRA_TRACK_URI = "extra_track_uri"
-        const val EXTRA_TRACK_TITLE = "extra_track_title"
-        private const val TAG = "VocalRemoverActivity"
-    }
 }
