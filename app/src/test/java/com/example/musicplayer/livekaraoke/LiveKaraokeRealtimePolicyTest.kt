@@ -1,10 +1,20 @@
 package com.example.musicplayer.livekaraoke
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LiveKaraokeRealtimePolicyTest {
+
+    @Test
+    fun cpuThreadRecommendationScalesWithoutOversubscribingSmallDevices() {
+        assertEquals(1, recommendedLiveKaraokeCpuThreads(1))
+        assertEquals(1, recommendedLiveKaraokeCpuThreads(2))
+        assertEquals(2, recommendedLiveKaraokeCpuThreads(4))
+        assertEquals(3, recommendedLiveKaraokeCpuThreads(6))
+        assertEquals(4, recommendedLiveKaraokeCpuThreads(8))
+    }
 
     @Test
     fun slow9482DeviceIsRejectedInsteadOfRequestingHugeStartupBuffer() {
