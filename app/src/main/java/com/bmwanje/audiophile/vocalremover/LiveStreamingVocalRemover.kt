@@ -88,6 +88,7 @@ internal class LiveStreamingVocalRemover(
             }
     }
 
+    @Synchronized
     fun push(block: VocalSeparatorCore.Stereo) {
         check(!finished) { "StreamingVocalRemover is already finished" }
         require(block.size > 0)
@@ -107,6 +108,7 @@ internal class LiveStreamingVocalRemover(
         drainPairs()
     }
 
+    @Synchronized
     fun finish() {
         check(!finished) { "StreamingVocalRemover is already finished" }
         finished = true
@@ -208,6 +210,7 @@ internal class LiveStreamingVocalRemover(
         }
     }
 
+    @Synchronized
     override fun close() {
         mixQueue.clear()
         vocalQueue.clear()
