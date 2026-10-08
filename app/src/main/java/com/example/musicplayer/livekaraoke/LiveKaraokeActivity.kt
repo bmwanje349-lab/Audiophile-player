@@ -62,6 +62,8 @@ class LiveKaraokeActivity : AppCompatActivity() {
     private lateinit var stop: MaterialButton
 
     private var userSeeking = false
+    private var autoStartRequested = false
+    private var lastLivePositionMs = 0L
 
     private val listener =
         object : LiveKaraokeEngine.Listener {
@@ -101,6 +103,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
                 positionMs: Long,
                 durationMs: Long,
             ) {
+                lastLivePositionMs = positionMs.coerceAtLeast(0L)
                 runOnUiThread {
                     if (!userSeeking) {
                         progress.max =
@@ -140,6 +143,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
                     action.text = "Start Live Karaoke"
                     action.isEnabled = trackUri != null
                     stop.isEnabled = false
+                    recoverNormalPlayback()
                 }
             }
 
@@ -150,6 +154,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
                     action.text = "Start Live Karaoke"
                     action.isEnabled = trackUri != null
                     stop.isEnabled = false
+                    recoverNormalPlayback()
                 }
             }
         }
@@ -226,17 +231,19 @@ class LiveKaraokeActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
 
-        val intent =
+        val serviceIntent =
             Intent(
                 this,
                 LiveKaraokeService::class.java,
             )
 
         bindService(
-            intent,
+            serviceIntent,
             connection,
             BIND_AUTO_CREATE,
         )
+
+        autoStartLiveKaraoke()
     }
 
     override fun onStop() {
@@ -451,10 +458,10 @@ class LiveKaraokeActivity : AppCompatActivity() {
         body.addView(
             TextView(this).apply {
                 text =
-                    "The first MDX window is buffered before playback. " +
-                        "After that, inference continues ahead of the playhead " +
-                        "inside a fixed memory budget. Seeking rebuilds context " +
-                        "from slightly before the target."
+                    "Live Karaoke starts automatically. The first MDX window " +
+                        "is buffered before the instrumental begins, then inference " +
+                        "continues ahead of the playhead inside a fixed memory budget. " +
+                        "Seeking rebuilds context from slightly before the target."
                 setTextColor(TEXT_SECONDARY)
                 textSize = 12f
                 setPadding(
@@ -542,6 +549,98 @@ class LiveKaraokeActivity : AppCompatActivity() {
         return root
     }
 
+    private fun autoStartLiveKaraoke() {
+        if (autoStartRequested) return
+
+        val uri = trackUri ?: return
+        autoStartRequested = true
+
+        val startIntent =
+            Intent(
+                this,
+                LiveKaraokeService::class.java,
+            ).apply {
+                putExtra(
+                    LiveKaraokeService.EXTRA_URI,
+                    uri,
+                )
+                putExtra(
+                    LiveKaraokeService.EXTRA_TITLE,
+                    trackTitle,
+                )
+                putExtra(
+                    LiveKaraokeService.EXTRA_POSITION_MS,
+                    initialPositionMs,
+                )
+            }
+
+        runCatching {
+            ContextCompat.startForegroundService(
+                this,
+                startIntent,
+            )
+        }.onFailure { throwable ->
+            autoStartRequested = false
+            status.text =
+                "Live karaoke could not start: " +
+                    (throwable.message ?: throwable.javaClass.simpleName)
+            action.text = "Start Live Karaoke"
+            action.isEnabled = true
+            stop.isEnabled = false
+            recoverNormalPlayback()
+        }
+    }
+
+    private fun recoverNormalPlayback() {
+        runCatching {
+            val controller =
+                androidx.media3.session.MediaController.Builder(
+                    this,
+                    androidx.media3.session.SessionToken(
+                        this,
+                        ComponentName(
+                            this,
+                            com.example.musicplayer.PlaybackService::class.java,
+                        ),
+                    ),
+                ).buildAsync()
+
+            controller.addListener(
+                object : androidx.media3.common.Player.Listener {
+                    override fun onEvents(
+                        player: androidx.media3.common.Player,
+                        events: androidx.media3.common.Player.Events,
+                    ) {
+                        val target =
+                            if (lastLivePositionMs > 0L) {
+                                lastLivePositionMs
+                            } else {
+                                initialPositionMs
+                            }
+                        player.seekTo(target.coerceAtLeast(0L))
+                        player.play()
+                        controller.release()
+                    }
+                }
+            )
+            controller.addListener(object : androidx.media3.common.Player.Listener {})
+            ContextCompat.getMainExecutor(this).execute {
+                runCatching {
+                    val connected = controller.get()
+                    val target =
+                        if (lastLivePositionMs > 0L) {
+                            lastLivePositionMs
+                        } else {
+                            initialPositionMs
+                        }
+                    connected.seekTo(target.coerceAtLeast(0L))
+                    connected.play()
+                    connected.release()
+                }
+            }
+        }
+    }
+
     private fun togglePlayback() {
         val active = service ?: return
 
@@ -554,6 +653,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
 
             LiveKaraokeEngine.State.STOPPED -> {
                 val uri = trackUri ?: return
+                autoStartRequested = true
 
                 val startIntent =
                     Intent(
