@@ -43,6 +43,16 @@ class LiveKaraokeService : Service() {
         >()
 
     private lateinit var engine: LiveKaraokeEngine
+
+    /*
+     * True only while this service owns its foreground notification. The
+     * engine reports STOPPED from stop()/close() *after* the notification was
+     * removed (and again from onDestroy), and notify() would re-post the
+     * ongoing notification as an orphan nobody can dismiss. Guard every
+     * notification write with this flag, under a lock shared with removal.
+     */
+    private val notificationLock = Any()
+    private var foregroundActive = false
     private var trackTitle = "Live Karaoke"
     private var trackUri: String? = null
 
@@ -102,14 +112,12 @@ class LiveKaraokeService : Service() {
                          * leave an orphaned foreground service/notification
                          * running after the listener has received the error.
                          */
-                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        leaveForeground()
                         stopSelf()
                     }
 
                     override fun onCompleted() {
-                        stopForeground(
-                            STOP_FOREGROUND_REMOVE
-                        )
+                        leaveForeground()
                         for (listener in listeners) {
                             listener.onCompleted()
                         }
@@ -143,12 +151,15 @@ class LiveKaraokeService : Service() {
                     ?: "Live Karaoke"
             trackUri = uri
 
-            startForeground(
-                NOTIFICATION_ID,
-                buildNotification(
-                    "Preparing live karaoke…"
-                ),
-            )
+synchronized(notificationLock) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(
+                        "Preparing live karaoke…"
+                    ),
+                )
+                foregroundActive = true
+            }
 
             engine.start(
                 uri = android.net.Uri.parse(uri),
@@ -225,10 +236,15 @@ class LiveKaraokeService : Service() {
 
     fun stopPlayback() {
         engine.stop()
-        stopForeground(
-            STOP_FOREGROUND_REMOVE
-        )
+        leaveForeground()
         stopSelf()
+    }
+
+    private fun leaveForeground() {
+        synchronized(notificationLock) {
+            foregroundActive = false
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        }
     }
 
     private fun buildNotification(
@@ -303,13 +319,16 @@ class LiveKaraokeService : Service() {
     private fun updateNotification(
         message: String,
     ) {
-        runCatching {
-            getSystemService(
-                NotificationManager::class.java
-            ).notify(
-                NOTIFICATION_ID,
-                buildNotification(message)
-            )
+        synchronized(notificationLock) {
+            if (!foregroundActive) return
+            runCatching {
+                getSystemService(
+                    NotificationManager::class.java
+                ).notify(
+                    NOTIFICATION_ID,
+                    buildNotification(message)
+                )
+            }
         }
     }
 
