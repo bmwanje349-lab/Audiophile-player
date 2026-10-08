@@ -25,8 +25,8 @@ class LiveKaraokeRealtimePolicyTest {
             calculateLiveKaraokeRequiredBufferFrames(
                 sourceSampleRate = sampleRate,
                 generatedPerWindow = 254_976,
-                startupBufferSeconds = 30,
-                startupBufferWindows = 5,
+                startupBufferSeconds = 6,
+                startupBufferWindows = 1,
                 remainingSeconds = remainingSeconds,
                 measuredProducerRate = measuredRate,
                 safetyMarginSeconds = 6.0,
