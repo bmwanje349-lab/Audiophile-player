@@ -375,7 +375,8 @@ class LiveKaraokeEngine(
         const val STARTUP_BUFFER_WINDOWS = 1
         const val RATE_ESTIMATION_MIN_SECONDS = 5.5
         const val LIVE_SAFETY_MARGIN_SECONDS = 6.0
-        const val AUDIO_TRACK_BUFFER_SECONDS = 2
+        const val AUDIO_TRACK_BUFFER_SECONDS = 4
+        const val AUDIO_TRACK_START_PRIME_SECONDS = 0.5
         const val NEURAL_CALIBRATION_TIMEOUT_MS = 12_000L
         const val MIN_NEURAL_SUSTAINED_RATE = 0.95
         const val MAX_NEURAL_STARTUP_SECONDS = 18.0
@@ -417,6 +418,31 @@ class LiveKaraokeEngine(
                     requestedPositionMs = positionMs.coerceAtLeast(0L),
                     settings = settings,
                     forceDspFallback = false,
+                )
+            session = next
+            next.start()
+        }
+    }
+
+    /** Test-only entry point for the complete Android AudioTrack path. */
+    internal fun startForTest(
+        uri: Uri,
+        positionMs: Long = 0L,
+        settings: Settings = Settings(),
+        forceDspFallback: Boolean = true,
+    ) {
+        synchronized(lock) {
+            check(!closed) { "Live karaoke engine is closed" }
+            stopLocked()
+
+            generation += 1L
+            val next =
+                Session(
+                    id = generation,
+                    uri = uri,
+                    requestedPositionMs = positionMs.coerceAtLeast(0L),
+                    settings = settings,
+                    forceDspFallback = forceDspFallback,
                 )
             session = next
             next.start()
@@ -597,6 +623,10 @@ class LiveKaraokeEngine(
         private val fallbackRequested = AtomicBoolean(false)
         private var consumerStarted = false
         private var droppedPrerollFrames = 0
+        private var lastUnderrunCount = -1
+        private var lastUnderrunPollNs = 0L
+        private var pendingAudioBlock: ShortArray? = null
+        private var pendingAudioOffset = 0
 
         private val decodedBlocks =
             ArrayBlockingQueue<LiveDecodedBlock>(4)
@@ -1257,11 +1287,12 @@ class LiveKaraokeEngine(
                         continue
                     }
 
-                    pollRuntimeHealth(System.nanoTime())
+                    val nowBeforePoll = System.nanoTime()
+                    pollRuntimeHealth(nowBeforePoll)
+                    pollAudioTrackUnderruns(nowBeforePoll)
 
                     if (!consumerStarted) {
-                        val buffered =
-                            queue?.availableFrames() ?: 0
+                        val buffered = queue?.availableFrames() ?: 0
                         val required =
                             if (forceDspFallback || fallbackRequested.get()) {
                                 dspStartupBufferFrames()
@@ -1276,21 +1307,16 @@ class LiveKaraokeEngine(
                                     dspStartupBufferFrames()
                                 }
                             }
+
                         val ready =
                             if (producerFinished) {
-                                // Even with nothing buffered (very short or
-                                // empty decode) fall through to take(), which
-                                // returns null once the queue is finished, so
-                                // the session completes instead of hanging in
-                                // "Building a safe instrumental buffer".
                                 true
                             } else {
                                 (
                                     forceDspFallback ||
                                         fallbackRequested.get() ||
                                         startupTargetFinalized
-                                ) &&
-                                    buffered >= required
+                                ) && buffered >= required
                             }
 
                         if (!ready) {
@@ -1313,10 +1339,7 @@ class LiveKaraokeEngine(
                                 )
                             }
 
-                            if (
-                                shouldUpdateUi &&
-                                isCurrent(id)
-                            ) {
+                            if (shouldUpdateUi && isCurrent(id)) {
                                 lastUiUpdateNs = nowNs
                                 listener.onState(
                                     State.BUFFERING,
@@ -1349,9 +1372,14 @@ class LiveKaraokeEngine(
                             continue
                         }
 
+                        if (!primeAudioTrack()) {
+                            break
+                        }
+
                         audioTrack?.play()
                         consumerStarted = true
                         state = State.PLAYING
+
                         if (isCurrent(id)) {
                             listener.onState(
                                 State.PLAYING,
@@ -1364,13 +1392,20 @@ class LiveKaraokeEngine(
                         }
                     }
 
-                    val block = queue?.take() ?: break
-                    var offset = 0
+                    val block =
+                        pendingAudioBlock ?: queue?.take() ?: break
 
-                    while (
-                        offset < block.size &&
-                        !cancelled.get()
-                    ) {
+                    var offset =
+                        if (pendingAudioBlock != null) {
+                            pendingAudioOffset
+                        } else {
+                            0
+                        }
+
+                    pendingAudioBlock = null
+                    pendingAudioOffset = 0
+
+                    while (offset < block.size && !cancelled.get()) {
                         val writeStartNs = System.nanoTime()
                         val written =
                             audioTrack?.write(
@@ -1379,22 +1414,22 @@ class LiveKaraokeEngine(
                                 block.size - offset,
                                 AudioTrack.WRITE_BLOCKING,
                             ) ?: 0
+
                         profiler.record(
                             LiveKaraokeStageProfiler.Stage.AUDIOTRACK_WRITE,
                             System.nanoTime() - writeStartNs,
                         )
 
                         if (written <= 0) {
-                            error(
-                                "AudioTrack write failed: $written"
-                            )
+                            error("AudioTrack write failed: $written")
                         }
 
                         offset += written
-                        submittedFrames +=
-                            (written / 2).toLong()
+                        submittedFrames += (written / 2).toLong()
 
                         val nowNs = System.nanoTime()
+                        pollAudioTrackUnderruns(nowNs)
+
                         if (
                             !forceDspFallback &&
                             !usingFastFallback &&
@@ -1410,7 +1445,7 @@ class LiveKaraokeEngine(
                             (
                                 lastUiUpdateNs == 0L ||
                                     nowNs - lastUiUpdateNs >=
-                                    UI_UPDATE_INTERVAL_MS * 1_000_000L
+                                        UI_UPDATE_INTERVAL_MS * 1_000_000L
                             )
                         ) {
                             lastUiUpdateNs = nowNs
@@ -1422,10 +1457,7 @@ class LiveKaraokeEngine(
                     }
                 }
 
-                if (
-                    !cancelled.get() &&
-                    isCurrent(id)
-                ) {
+                if (!cancelled.get() && isCurrent(id)) {
                     waitForAudioTrackDrain()
 
                     runCatching { audioTrack?.stop() }
@@ -1446,54 +1478,137 @@ class LiveKaraokeEngine(
             }
         }
 
-        private fun fail(throwable: Throwable) {
-            if (!cancelled.compareAndSet(false, true)) return
-            producerFinished = true
-            queue?.cancel()
-            executor?.shutdownNow()
-            if (!consumerStarted) {
-                releaseAudioTrack()
-            }
-            if (isCurrent(id)) {
-                listener.onError(throwable)
-            }
-        }
+        /**
+         * AudioTrack must be primed before play(). Android documents that the
+         * streaming start threshold is the amount of queued audio required for
+         * playback to begin. We write the threshold (or a portable 0.5 s
+         * fallback on older Android versions) without stopping/restarting the
+         * track. Any partially consumed block is retained for the main loop.
+         */
+        private fun primeAudioTrack(): Boolean {
+            val track = audioTrack ?: return false
 
-        private fun releaseAudioTrack() {
-            val track =
-                synchronized(this) {
-                    val current = audioTrack ?: return
-                    audioTrack = null
-                    current
-                }
-
-            runCatching { track.pause() }
-            runCatching { track.flush() }
-            runCatching { track.stop() }
-            runCatching { track.release() }
-        }
-
-        private fun playbackPositionMs(): Long {
-            val track =
-                audioTrack
-
-            val played =
-                if (track != null && consumerStarted) {
-                    audioTrackPlaybackHeadFrames(
-                        runCatching {
-                            track.playbackHeadPosition
-                        }.getOrDefault(0),
-                    )
+            val targetFrames =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    track.getStartThresholdInFrames()
+                        .coerceAtMost(
+                            (
+                                sourceSampleRate.toDouble() *
+                                    AUDIO_TRACK_START_PRIME_SECONDS
+                            )
+                                .roundToInt()
+                                .coerceAtLeast(1),
+                        )
                 } else {
-                    0L
+                    (
+                        sourceSampleRate.toDouble() *
+                            AUDIO_TRACK_START_PRIME_SECONDS
+                    )
+                        .roundToInt()
+                        .coerceAtLeast(1)
                 }
 
-            return liveKaraokePositionMs(
-                playbackStartMs = playbackStartMs,
-                playbackFrames = played,
-                sampleRate = sourceSampleRate,
-                durationMs = durationMs,
+            var primedFrames = 0
+
+            while (primedFrames < targetFrames && !cancelled.get()) {
+                val block =
+                    pendingAudioBlock ?: queue?.take()
+                        ?: return primedFrames > 0
+
+                var offset =
+                    if (pendingAudioBlock != null) {
+                        pendingAudioOffset
+                    } else {
+                        0
+                    }
+
+                pendingAudioBlock = null
+                pendingAudioOffset = 0
+
+                while (
+                    offset < block.size &&
+                    primedFrames < targetFrames &&
+                    !cancelled.get()
+                ) {
+                    val targetRemaining = targetFrames - primedFrames
+                    val requestedShorts =
+                        min(
+                            block.size - offset,
+                            targetRemaining * 2,
+                        )
+
+                    val writeStartNs = System.nanoTime()
+                    val written =
+                        track.write(
+                            block,
+                            offset,
+                            requestedShorts,
+                            AudioTrack.WRITE_BLOCKING,
+                        )
+
+                    profiler.record(
+                        LiveKaraokeStageProfiler.Stage.AUDIOTRACK_WRITE,
+                        System.nanoTime() - writeStartNs,
+                    )
+
+                    if (written <= 0) {
+                        error("AudioTrack prime write failed: $written")
+                    }
+
+                    offset += written
+                    primedFrames += written / 2
+                    submittedFrames += (written / 2).toLong()
+                }
+
+                if (offset < block.size) {
+                    pendingAudioBlock = block
+                    pendingAudioOffset = offset
+                }
+            }
+
+            return primedFrames > 0
+        }
+
+        private fun pollAudioTrackUnderruns(nowNs: Long) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+            if (nowNs - lastUnderrunPollNs < 1_000_000_000L) return
+
+            lastUnderrunPollNs = nowNs
+            val track = audioTrack ?: return
+            val underruns =
+                runCatching { track.underrunCount }
+                    .getOrDefault(lastUnderrunCount)
+
+            if (lastUnderrunCount < 0) {
+                lastUnderrunCount = underruns
+                return
+            }
+
+            if (underruns <= lastUnderrunCount) return
+
+            val delta = underruns - lastUnderrunCount
+            lastUnderrunCount = underruns
+
+            Log.w(
+                PROFILE_TAG,
+                "AudioTrack underrun detected: +$delta (total=$underruns)",
             )
+
+            // Grow the effective application buffer without recreating or
+            // flushing the track. This is the least disruptive response.
+            runCatching {
+                track.setBufferSizeInFrames(track.bufferCapacityInFrames)
+            }
+
+            if (
+                !forceDspFallback &&
+                !usingFastFallback &&
+                !fallbackRequested.get()
+            ) {
+                requestFastFallback(
+                    "AudioTrack underrun detected; switching processing to Fast Live while preserving the current output stream.",
+                )
+            }
         }
 
         private fun waitForAudioTrackDrain() {
@@ -2232,13 +2347,38 @@ class LiveKaraokeEngine(
                     bufferBytes
                 )
                 .build()
-                .also {
+                .also { track ->
                     check(
-                        it.state ==
+                        track.state ==
                             AudioTrack.STATE_INITIALIZED
                     ) {
                         "AudioTrack failed to initialize"
                     }
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        val desiredStartFrames =
+                            (
+                                sampleRate.toDouble() *
+                                    AUDIO_TRACK_START_PRIME_SECONDS
+                            )
+                                .roundToInt()
+                                .coerceIn(
+                                    1,
+                                    track.bufferCapacityInFrames,
+                                )
+
+                        runCatching {
+                            track.setStartThresholdInFrames(
+                                desiredStartFrames,
+                            )
+                        }
+                    }
+
+                    lastUnderrunCount =
+                        runCatching {
+                            track.underrunCount
+                        }.getOrDefault(0)
+                    lastUnderrunPollNs = 0L
                 }
         }
 
