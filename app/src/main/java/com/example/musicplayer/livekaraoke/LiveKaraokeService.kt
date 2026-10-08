@@ -151,7 +151,7 @@ class LiveKaraokeService : Service() {
                     ?: "Live Karaoke"
             trackUri = uri
 
-synchronized(notificationLock) {
+            synchronized(notificationLock) {
                 startForeground(
                     NOTIFICATION_ID,
                     buildNotification(
