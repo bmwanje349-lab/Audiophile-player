@@ -59,6 +59,34 @@ class LiveKaraokeTimingTest {
     }
 
     @Test
+    fun prerollFrameMathUsesMicrosecondPrecision() {
+        /*
+         * Start at 10.000 ms, decoder begins at 8.500 ms.
+         * At 44.1 kHz this is 1.5 ms = 66.15 frames, rounded to 66.
+         */
+        assertEquals(
+            66,
+            calculateLiveKaraokePrerollFrames(
+                playbackStartMs = 10L,
+                actualDecodeStartUs = 8_500L,
+                sampleRate = 44_100,
+            ),
+        )
+    }
+
+    @Test
+    fun prerollNeverBecomesNegativeWhenDecodeStartsAfterTarget() {
+        assertEquals(
+            0,
+            calculateLiveKaraokePrerollFrames(
+                playbackStartMs = 10L,
+                actualDecodeStartUs = 10_500L,
+                sampleRate = 44_100,
+            ),
+        )
+    }
+
+    @Test
     fun positionNeverExceedsKnownDuration() {
         assertEquals(
             212_000L,
