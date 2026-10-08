@@ -1,7 +1,6 @@
 package com.example.musicplayer.livekaraoke
 
 import com.bmwanje.audiophile.vocalremover.NativeVocalRemover
-import com.bmwanje.audiophile.vocalremover.VocalRemoverPipeline
 import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
 import kotlin.math.min
 
