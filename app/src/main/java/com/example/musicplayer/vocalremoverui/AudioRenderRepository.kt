@@ -15,6 +15,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 
 /**
  * Bounded-memory offline audio renderer for the AI Vocal Remover.
@@ -35,6 +36,10 @@ class AudioRenderRepository(
             }
         }
 
+    @Volatile
+    private var activeTask: Future<*>? = null
+
+    @Synchronized
     fun renderVocalRemovalToWav(
         uri: Uri,
         titleSuffix: String,
@@ -45,7 +50,11 @@ class AudioRenderRepository(
         onReady: (Uri) -> Unit,
         onError: (Throwable) -> Unit,
     ) {
-        executor.execute {
+        if (activeTask?.isDone == false) {
+            throw IllegalStateException("A vocal-removal render is already running")
+        }
+
+        activeTask = executor.submit {
             var pipeline: VocalRemoverPipeline? = null
             var streaming: StreamingVocalRemover? = null
             var writer: StreamingWavWriter? = null
@@ -101,7 +110,9 @@ class AudioRenderRepository(
                 onProgress(1f)
                 onReady(Uri.fromFile(output))
             } catch (throwable: Throwable) {
-                onError(throwable)
+                if (!Thread.currentThread().isInterrupted) {
+                    onError(throwable)
+                }
             } finally {
                 runCatching { streaming?.close() }
                 runCatching { pipeline?.close() }
@@ -111,8 +122,21 @@ class AudioRenderRepository(
         }
     }
 
+    @Synchronized
+    fun cancel() {
+        activeTask?.cancel(true)
+        activeTask = null
+    }
+
     fun close() {
+        cancel()
         executor.shutdownNow()
+    }
+
+    private fun ensureNotInterrupted() {
+        check(!Thread.currentThread().isInterrupted) {
+            "Vocal-removal render cancelled"
+        }
     }
 
     private fun findAudioTrack(uri: Uri): AudioTrackResources {
