@@ -1,5 +1,6 @@
 package com.example.musicplayer.livekaraoke
 
+import android.app.ActivityManager
 import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -346,16 +347,6 @@ class LiveKaraokeEngine(
     private val modelSpec = MdxModelSpec.LIGHT_9482
 
     private companion object {
-        // A single MDX window is about 5.8 s of generated audio. Starting
-        // playback with only one window leaves no margin for normal phone-side
-        // inference jitter, decoder work, GC, or thermal throttling. Keep a
-        // multi-window queue and require a real safety buffer before play.
-        // The neural separator is very close to real-time on some phones.
-        // A short queue therefore looks healthy at launch but can still drain
-        // after several inference windows. Keep a deep bounded head-start so
-        // small throughput deficits and transient CPU/GC stalls are absorbed
-        // without ever pausing AudioTrack.
-        const val MAX_LOOKAHEAD_SECONDS = 120
         const val STARTUP_BUFFER_SECONDS = 6
         const val STARTUP_BUFFER_WINDOWS = 1
         const val RATE_ESTIMATION_MIN_SECONDS = 5.5
@@ -378,11 +369,12 @@ class LiveKaraokeEngine(
     private var session: Session? = null
     private var generation = 0L
     private var closed = false
+    private var cachedLiveRunner: LiveMdxOnnxVocalModelRunner? = null
 
     fun start(uri: Uri, positionMs: Long = 0L, settings: Settings = Settings()) {
         synchronized(lock) {
             check(!closed) { "Live karaoke engine is closed" }
-            stopLocked()
+            stopLocked(keepNeuralCache = false)
 
             generation += 1L
             val next =
@@ -413,7 +405,7 @@ class LiveKaraokeEngine(
     fun seekTo(positionMs: Long) {
         synchronized(lock) {
             val current = session ?: return
-            stopLocked()
+            stopLocked(keepNeuralCache = true)
 
             generation += 1L
             val next =
@@ -427,7 +419,7 @@ class LiveKaraokeEngine(
             session = next
             listener.onState(
                 State.SEEKING,
-                "Seeking — rebuilding MDX context…",
+                "Seeking — reusing the loaded MDX model…",
             )
             next.start()
         }
@@ -435,7 +427,7 @@ class LiveKaraokeEngine(
 
     fun stop() {
         synchronized(lock) {
-            stopLocked()
+            stopLocked(keepNeuralCache = false)
             generation += 1L
         }
     }
@@ -449,14 +441,47 @@ class LiveKaraokeEngine(
         synchronized(lock) {
             if (closed) return
             closed = true
-            stopLocked()
+            stopLocked(keepNeuralCache = false)
         }
     }
 
-    private fun stopLocked() {
+    private fun stopLocked(keepNeuralCache: Boolean = false) {
         session?.stop()
         session = null
+        if (!keepNeuralCache) {
+            closeCachedLiveRunner()
+        }
         listener.onState(State.STOPPED, "Live karaoke stopped")
+    }
+
+    private fun obtainCachedLiveRunner(modelPath: String, profiler: LiveKaraokeStageProfiler): LiveMdxOnnxVocalModelRunner {
+        synchronized(lock) {
+            val existing = cachedLiveRunner
+            if (existing != null) {
+                existing.setProfiler(profiler)
+                return existing
+            }
+
+            val created =
+                LiveMdxOnnxVocalModelRunner(
+                    modelPath = modelPath,
+                    modelSpec = modelSpec,
+                    cpuThreads =
+                        recommendedLiveKaraokeCpuThreads(
+                            Runtime.getRuntime().availableProcessors(),
+                        ),
+                    profiler = profiler,
+                )
+            cachedLiveRunner = created
+            return created
+        }
+    }
+
+    private fun closeCachedLiveRunner() {
+        val runner = cachedLiveRunner ?: return
+        cachedLiveRunner = null
+        runCatching { runner.clearProfiler() }
+        runCatching { runner.close() }
     }
 
     private fun isCurrent(id: Long): Boolean =
@@ -527,6 +552,14 @@ class LiveKaraokeEngine(
         private val decodedBlocks =
             ArrayBlockingQueue<LiveDecodedBlock>(4)
 
+        private fun liveLookaheadSeconds(): Int {
+            val manager =
+                appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            return LiveKaraokePerformancePolicy.maxLookaheadSeconds(
+                manager?.memoryClass ?: 256,
+            )
+        }
+
         fun start() {
             executor =
                 Executors.newFixedThreadPool(
@@ -591,9 +624,12 @@ class LiveKaraokeEngine(
             runCatching { audioTrack?.pause() }
             runCatching { audioTrack?.stop() }
             executor?.shutdownNow()
+            runCatching {
+                executor?.awaitTermination(2_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
+            }
 
-            // The inference thread owns the pipeline lifetime and closes it
-            // from its finally block after the current model call unwinds.
+            // The cached ONNX session is intentionally retained for seek/restart.
+            // Session-local decoder/DSP/queues are still released here.
         }
 
         private fun produce() {
@@ -632,7 +668,7 @@ class LiveKaraokeEngine(
                         maxFrames =
                             maxLiveKaraokeLookaheadFrames(
                                 sourceSampleRate,
-                                MAX_LOOKAHEAD_SECONDS,
+                                liveLookaheadSeconds(),
                             ),
                     )
 
@@ -720,18 +756,13 @@ class LiveKaraokeEngine(
                     }
 
                 val liveRunner =
-                    LiveMdxOnnxVocalModelRunner(
+                    obtainCachedLiveRunner(
                         modelPath = modelFile.absolutePath,
-                        modelSpec = modelSpec,
-                        cpuThreads =
-                            recommendedLiveKaraokeCpuThreads(
-                                Runtime.getRuntime().availableProcessors(),
-                            ),
                         profiler = profiler,
                     )
+                liveRunner.setProfiler(profiler)
 
                 if (!isCurrent(id)) {
-                    runCatching { liveRunner.close() }
                     runCatching { native.close() }
                     return
                 }
