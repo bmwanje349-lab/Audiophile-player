@@ -15,6 +15,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
@@ -22,6 +23,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -1016,7 +1018,17 @@ class MainActivity : AppCompatActivity() {
                 }
         }
 
-        startActivity(intent)
+        runCatching {
+            startActivity(intent)
+        }.onFailure { throwable ->
+            Log.e("MainActivity", "Unable to launch AI Vocal Remover", throwable)
+            Toast.makeText(
+                this,
+                "AI Vocal Remover could not open: " +
+                    (throwable.message ?: throwable.javaClass.simpleName),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
     }
 
     private fun launchLiveKaraoke() {
