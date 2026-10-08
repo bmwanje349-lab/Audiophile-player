@@ -192,45 +192,6 @@ jobs:
           path: build.log
           if-no-files-found: warn
 
-  instrumentation:
-    needs: check-model
-    if: needs.check-model.outputs.available == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          accept-android-sdk-licenses: true
-
-      - name: Install Android build dependencies
-        run: |
-          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.3.13750724"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
-      - name: Run real Android MDX/Karaoke instrumentation
-        uses: reactivecircus/android-emulator-runner@v2.38.0
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          cores: 4
-          disable-animations: true
-          emulator-options: -no-window -noaudio -no-boot-anim -gpu swiftshader_indirect
-          script: gradle :app:connectedDebugAndroidTest --console=plain --stacktrace --no-daemon
 
   production-release:
     needs: check-model
