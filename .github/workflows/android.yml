@@ -92,6 +92,15 @@ jobs:
           echo "--- app tasks ---"
           gradle :app:tasks --all --console=plain --no-daemon
 
+      - name: Verify critical Android wiring
+        run: |
+          set -euo pipefail
+          grep -Fq 'android:name=".livekaraoke.LiveKaraokeService"' app/src/main/AndroidManifest.xml
+          ! grep -Fq 'android.permission.INTERNET' app/src/main/AndroidManifest.xml
+          grep -Fq 'ci/audiophile-debug.keystore' app/build.gradle.kts
+          grep -Fq 'ci/audiophile-debug.keystore.b64' app/build.gradle.kts
+          test -f ci/audiophile-debug.keystore.b64
+
       - name: Run JVM streaming regression tests
         run: |
           set -euo pipefail
@@ -140,6 +149,11 @@ jobs:
                   ), f"ONNX Runtime native library missing for {abi}"
           print("APK payload verification passed")
           PY
+          unzip -t "$APK" >/dev/null
+          EXPECTED_CERT="0E:D9:24:64:FD:40:EF:0A:D1:06:CB:AF:2E:4C:D5:AE:BB:55:E3:88:BB:77:12:3D:25:04:F8:FE:D1:20:8B:9E"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" > certs.txt
+          grep -qi "$EXPECTED_CERT" certs.txt
+          echo "Stable CI debug certificate verification passed"
 
       - name: Build unsigned Release APK
         run: |
