@@ -196,6 +196,27 @@ internal class NeuralLiveNotViableException(
     message: String,
 ) : IllegalStateException(message)
 
+internal fun isNeuralLiveStartupViable(
+    measuredProducerRate: Double,
+    requiredFrames: Long,
+    sourceSampleRate: Int,
+    minimumProducerRate: Double = 0.95,
+    maximumStartupSeconds: Double = 18.0,
+): Boolean {
+    require(measuredProducerRate.isFinite() && measuredProducerRate > 0.0)
+    require(requiredFrames >= 0L)
+    require(sourceSampleRate > 0)
+    require(minimumProducerRate > 0.0)
+    require(maximumStartupSeconds > 0.0)
+
+    val startupSeconds =
+        requiredFrames.toDouble() /
+            sourceSampleRate.toDouble()
+
+    return measuredProducerRate >= minimumProducerRate &&
+        startupSeconds <= maximumStartupSeconds
+}
+
 internal fun audioTrackPlaybackHeadFrames(rawPosition: Int): Long =
     rawPosition.toLong() and 0xFFFF_FFFFL
 
@@ -1286,8 +1307,13 @@ class LiveKaraokeEngine(
                     sourceSampleRate.toDouble()
 
             if (
-                measuredRate < MIN_NEURAL_SUSTAINED_RATE ||
-                targetSeconds > MAX_NEURAL_STARTUP_SECONDS
+                !isNeuralLiveStartupViable(
+                    measuredProducerRate = measuredRate,
+                    requiredFrames = target.toLong(),
+                    sourceSampleRate = sourceSampleRate,
+                    minimumProducerRate = MIN_NEURAL_SUSTAINED_RATE,
+                    maximumStartupSeconds = MAX_NEURAL_STARTUP_SECONDS,
+                )
             ) {
                 throw NeuralLiveNotViableException(
                     "Measured MDX-Net rate is %.2fx real-time; neural startup would require %.1f s."
