@@ -209,13 +209,24 @@ internal fun calculateLiveKaraokePrerollFrames(
         )
             .coerceAtLeast(0L)
 
-    return (
-        prerollUs.toDouble() *
-            sampleRate.toDouble() /
-            1_000_000.0
-        )
-            .roundToInt()
-            .coerceAtLeast(0)
+    val numerator =
+        prerollUs * sampleRate.toLong()
+
+    /*
+     * Seeking must never resume before the requested source position.
+     * Round upward to the next complete source frame rather than to nearest.
+     */
+    val frames =
+        if (numerator == 0L) {
+            0L
+        } else {
+            (numerator + 999_999L) / 1_000_000L
+        }
+
+    return frames
+        .coerceAtMost(Int.MAX_VALUE.toLong())
+        .toInt()
+
 }
 
 internal fun liveKaraokePositionMs(
@@ -231,8 +242,7 @@ internal fun liveKaraokePositionMs(
     val elapsedMs =
         (playbackFrames.toDouble() * 1000.0 /
             sampleRate.toDouble())
-            .roundToInt()
-            .toLong()
+            .roundToLong()
 
     return (playbackStartMs + elapsedMs)
         .coerceAtMost(
@@ -593,12 +603,6 @@ class LiveKaraokeEngine(
                     requestedDecodeStartUs,
                     MediaExtractor.SEEK_TO_PREVIOUS_SYNC,
                 )
-
-                actualDecodeStartMs =
-                    (
-                        extractor.sampleTime
-                            .coerceAtLeast(0L) / 1000L
-                    )
 
                 val actualDecodeStartUs =
                     extractor.sampleTime.coerceAtLeast(0L)
@@ -1559,8 +1563,6 @@ class LiveKaraokeEngine(
             runCatching {
                 getLong(key)
             }.getOrNull()
-
-        private var actualDecodeStartMs = 0L
 
     }
 }
