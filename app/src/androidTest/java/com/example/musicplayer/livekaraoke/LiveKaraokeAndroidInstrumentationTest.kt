@@ -1,0 +1,214 @@
+package com.example.musicplayer.livekaraoke
+
+import android.content.Context
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.bmwanje.audiophile.vocalremover.LiveMdxOnnxVocalModelRunner
+import com.bmwanje.audiophile.vocalremover.LiveStreamingVocalRemover
+import com.bmwanje.audiophile.vocalremover.MdxModelManager
+import com.bmwanje.audiophile.vocalremover.MdxModelSpec
+import com.bmwanje.audiophile.vocalremover.MdxSeparatorCore
+import com.bmwanje.audiophile.vocalremover.LiveKaraokeSettingsSnapshot
+import com.bmwanje.audiophile.vocalremover.NativeVocalRemover
+import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import kotlin.math.PI
+import kotlin.math.sin
+
+@RunWith(AndroidJUnit4::class)
+class LiveKaraokeAndroidInstrumentationTest {
+
+    private val context: Context
+        get() = InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+
+    @Test
+    fun bundledMdxModelExecutesThroughAndroidOnnxRuntime() {
+        val spec = MdxModelSpec.LIGHT_9482
+        val file = MdxModelManager.ensureInstalled(context, spec)
+
+        assertEquals(spec.fileSizeBytes, file.length())
+        assertEquals(spec.sha256, MdxModelManager.sha256(file))
+
+        val runner =
+            LiveMdxOnnxVocalModelRunner(
+                modelPath = file.absolutePath,
+                modelSpec = spec,
+                cpuThreads = 1,
+            )
+
+        try {
+            val stft = com.bmwanje.audiophile.vocalremover.LiveMdxStft(spec)
+            val n = stft.chunkSizeSamples()
+
+            val left = FloatArray(n) { i ->
+                (0.20 * sin(
+                    2.0 * PI * 440.0 * i / stft.SAMPLE_RATE
+                )).toFloat()
+            }
+            val right = FloatArray(n) { i ->
+                (0.16 * sin(
+                    2.0 * PI * 550.0 * i / stft.SAMPLE_RATE
+                )).toFloat()
+            }
+
+            val output = runner.separateChunk(left, right)
+
+            assertEquals(n, output.size)
+            assertTrue(output.left.all { it.isFinite() })
+            assertTrue(output.right.all { it.isFinite() })
+            assertEquals(1L, runner.inferenceCount())
+        } finally {
+            runner.close()
+        }
+    }
+
+    @Test
+    fun realModelFeedsTheBoundedStreamingSeparatorOnAndroid() {
+        val spec = MdxModelSpec.LIGHT_9482
+        val file = MdxModelManager.ensureInstalled(context, spec)
+        val runner =
+            LiveMdxOnnxVocalModelRunner(
+                modelPath = file.absolutePath,
+                modelSpec = spec,
+                cpuThreads = 1,
+            )
+
+        try {
+            val stft = com.bmwanje.audiophile.vocalremover.LiveMdxStft(spec)
+            val inputSamples =
+                stft.generatedSamplesPerChunk() +
+                    stft.edgeTrimSamples()
+
+            val input =
+                VocalSeparatorCore.Stereo(
+                    left = FloatArray(inputSamples) { i ->
+                        (0.18 * sin(
+                            2.0 * PI * 330.0 * i / stft.SAMPLE_RATE
+                        )).toFloat()
+                    },
+                    right = FloatArray(inputSamples) { i ->
+                        (0.15 * sin(
+                            2.0 * PI * 495.0 * i / stft.SAMPLE_RATE
+                        )).toFloat()
+                    },
+                )
+
+            val output = ArrayList<VocalSeparatorCore.Stereo>()
+            val separator =
+                MdxSeparatorCore.StreamingSeparator(
+                    modelSpec = spec,
+                    runner = runner,
+                    emit = { output += it },
+                )
+
+            separator.push(input)
+            separator.finish()
+
+            val outputFrames = output.sumOf { it.size }
+            assertEquals(input.size, outputFrames)
+            assertTrue(runner.inferenceCount() >= 1L)
+            assertTrue(
+                output.all { block ->
+                    block.left.all { it.isFinite() } &&
+                        block.right.all { it.isFinite() }
+                }
+            )
+        } finally {
+            runner.close()
+        }
+    }
+
+    @Test
+    fun pendingNeuralAudioTransfersExactlyOnceIntoFastLiveTimeline() {
+        val sampleRate = 44_100
+        val input =
+            VocalSeparatorCore.Stereo(
+                left = FloatArray(4_096) { i ->
+                    (0.2 * sin(i * 0.03)).toFloat()
+                },
+                right = FloatArray(4_096) { i ->
+                    (0.15 * sin(i * 0.021)).toFloat()
+                },
+            )
+
+        val native = NativeVocalRemover(sampleRate)
+        val neuralStub =
+            object : MdxSeparatorCore.Runner {
+                override fun separateChunk(
+                    left: FloatArray,
+                    right: FloatArray,
+                ): com.bmwanje.audiophile.vocalremover.MdxStft.StereoChunk {
+                    error("The handoff test must not need an MDX inference window")
+                }
+            }
+
+        val handedOff =
+            ArrayList<VocalSeparatorCore.Stereo>()
+
+        val streaming =
+            LiveStreamingVocalRemover(
+                sampleRate = sampleRate,
+                runner = neuralStub,
+                modelSpec = MdxModelSpec.LIGHT_9482,
+                native = native,
+                emit = {},
+            )
+
+        val fallbackOutput =
+            ArrayList<VocalSeparatorCore.Stereo>()
+
+        val fallback =
+            LiveDspFallbackProcessor(
+                sampleRate = sampleRate,
+                settings =
+                    LiveKaraokeSettingsSnapshot(
+                        depth = 1f,
+                        focus = 0.5f,
+                        transientProtection = 0.7f,
+                        dryWet = 1f,
+                        stemGainDb = 0f,
+                        outputGainDb = 0f,
+                        ceilingDb = -1f,
+                    ),
+                emit = { fallbackOutput += it },
+            )
+
+        try {
+            streaming.push(input)
+
+            streaming.drainPendingMixTo { block ->
+                handedOff += block
+                fallback.push(block)
+            }
+            fallback.finish()
+
+            val handedFrames = handedOff.sumOf { it.size }
+            val fallbackFrames = fallbackOutput.sumOf { it.size }
+
+            assertEquals(input.size, handedFrames)
+            assertEquals(input.size, fallbackFrames)
+
+            val reconstructedL =
+                FloatArray(handedFrames)
+            val reconstructedR =
+                FloatArray(handedFrames)
+            var offset = 0
+            for (block in handedOff) {
+                System.arraycopy(block.left, 0, reconstructedL, offset, block.size)
+                System.arraycopy(block.right, 0, reconstructedR, offset, block.size)
+                offset += block.size
+            }
+
+            assertTrue(reconstructedL.contentEquals(input.left))
+            assertTrue(reconstructedR.contentEquals(input.right))
+        } finally {
+            streaming.close()
+            fallback.close()
+        }
+    }
+}
