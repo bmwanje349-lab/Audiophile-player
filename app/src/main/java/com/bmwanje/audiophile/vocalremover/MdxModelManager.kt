@@ -132,6 +132,9 @@ object ModelManager {
     fun isInstalled(context: Context): Boolean =
         MdxModelManager.isInstalled(context, MdxModelSpec.LIGHT_9482)
 
+    fun isPresent(context: Context): Boolean =
+        MdxModelManager.isPresent(context, MdxModelSpec.LIGHT_9482)
+
     fun ensureInstalled(
         context: Context,
         progress: ((Long, Long) -> Unit)? = null,
