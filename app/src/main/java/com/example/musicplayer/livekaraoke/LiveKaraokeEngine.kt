@@ -102,7 +102,7 @@ internal object LiveKaraokePerformancePolicy {
 
 internal fun maxLiveKaraokeLookaheadFrames(
     sourceSampleRate: Int,
-    maxLookaheadSeconds: Int = 120,
+    maxLookaheadSeconds: Int = 32,
 ): Int {
     require(sourceSampleRate > 0)
     require(maxLookaheadSeconds > 0)
@@ -646,12 +646,10 @@ class LiveKaraokeEngine(
             runCatching { audioTrack?.pause() }
             runCatching { audioTrack?.stop() }
             executor?.shutdownNow()
-            runCatching {
-                executor?.awaitTermination(2_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
-            }
 
-            // The cached ONNX session is intentionally retained for seek/restart.
-            // Session-local decoder/DSP/queues are still released here.
+            // Do not block while holding the engine lock. The cached ONNX runner
+            // itself serializes inference, so a new seek session can safely wait
+            // for an in-flight call to unwind.
         }
 
         private fun produce() {
@@ -937,7 +935,7 @@ class LiveKaraokeEngine(
                         maxFrames =
                             maxLiveKaraokeLookaheadFrames(
                                 sourceSampleRate,
-                                MAX_LOOKAHEAD_SECONDS,
+                                liveLookaheadSeconds(),
                             ),
                     )
 
@@ -1380,7 +1378,7 @@ class LiveKaraokeEngine(
             val maxLookaheadFrames =
                 maxLiveKaraokeLookaheadFrames(
                     sourceSampleRate,
-                    MAX_LOOKAHEAD_SECONDS,
+                    liveLookaheadSeconds(),
                 )
 
             if (startupTargetFinalized) {
