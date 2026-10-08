@@ -150,9 +150,12 @@ jobs:
           print("APK payload verification passed")
           PY
           unzip -t "$APK" >/dev/null
-          EXPECTED_CERT="0E:D9:24:64:FD:40:EF:0A:D1:06:CB:AF:2E:4C:D5:AE:BB:55:E3:88:BB:77:12:3D:25:04:F8:FE:D1:20:8B:9E"
+          EXPECTED_CERT="0ed92464fd40ef0ad106cbaf2e4cd5aebb55e388bb77123d2504f8fed1208b9e"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" > certs.txt
-          grep -qi "$EXPECTED_CERT" certs.txt
+          cat certs.txt
+          ACTUAL_CERT="$(sed -nE 's/.*SHA-256 digest: *([0-9A-Fa-f:]+).*/\1/p' certs.txt | head -1 | tr -d ':')"
+          test -n "$ACTUAL_CERT"
+          test "$(printf '%s' "$ACTUAL_CERT" | tr '[:upper:]' '[:lower:]')" = "$EXPECTED_CERT"
           echo "Stable CI debug certificate verification passed"
 
       - name: Build unsigned Release APK
