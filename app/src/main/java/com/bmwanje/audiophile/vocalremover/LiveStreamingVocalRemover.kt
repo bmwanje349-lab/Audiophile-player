@@ -158,7 +158,8 @@ class LiveStreamingVocalRemover(
 
     fun inputSamples(): Long = sourceSamples
     fun emittedSamples(): Long = aligner.emittedSamples()
-    fun mdxInferenceCount(): Long = runner.inferenceCount()
+    fun mdxInferenceCount(): Long =
+        (runner as? LiveMdxOnnxVocalModelRunner)?.inferenceCount() ?: 0L
 
     private fun drainPairs() {
         while (mixQueue.available() > 0 && vocalQueue.available() > 0) {
@@ -208,7 +209,7 @@ class LiveStreamingVocalRemover(
         mixQueue.clear()
         vocalQueue.clear()
         runCatching { native.close() }
-        runCatching { runner.close() }
+        runCatching { (runner as? AutoCloseable)?.close() }
     }
 }
 
