@@ -649,6 +649,13 @@ class LiveKaraokeEngine(
                         enqueueInstrumental(block)
                     }
 
+                // Start the throughput clock before the first window is
+                // inferred. Starting it at the first emitted block made the
+                // whole first window (~5.8 s of audio) count as free, which
+                // overestimated the producer rate by up to ~1.7x and so
+                // under-sized the safety buffer.
+                producerRateStartNs = System.nanoTime()
+
                 audioTrack =
                     createAudioTrack(sourceSampleRate)
 
@@ -732,7 +739,12 @@ class LiveKaraokeEngine(
                             initialBufferFrames()
                         val ready =
                             if (producerFinished) {
-                                buffered > 0
+                                // Even with nothing buffered (very short or
+                                // empty decode) fall through to take(), which
+                                // returns null once the queue is finished, so
+                                // the session completes instead of hanging in
+                                // "Building a safe instrumental buffer".
+                                true
                             } else {
                                 startupTargetFinalized &&
                                     buffered >= required
