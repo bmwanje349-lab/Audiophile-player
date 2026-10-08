@@ -24,6 +24,7 @@ android {
         targetSdk = 35
         versionCode = 3
         versionName = "0.4.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -37,6 +38,36 @@ android {
             keyAlias = "audiophile-debug"
             keyPassword = "audiophile-debug"
         }
+
+        /*
+         * Production signing is supplied out-of-band through CI secrets.
+         * Local/CI test builds deliberately fall back to the reproducible
+         * test certificate so the APK remains installable; that certificate
+         * is not a production distribution key.
+         */
+        val productionKeystorePath =
+            System.getenv("ANDROID_RELEASE_KEYSTORE")
+                ?.takeIf { it.isNotBlank() }
+        val productionStorePassword =
+            System.getenv("ANDROID_RELEASE_STORE_PASSWORD")
+        val productionKeyAlias =
+            System.getenv("ANDROID_RELEASE_KEY_ALIAS")
+        val productionKeyPassword =
+            System.getenv("ANDROID_RELEASE_KEY_PASSWORD")
+
+        if (
+            productionKeystorePath != null &&
+            !productionStorePassword.isNullOrBlank() &&
+            !productionKeyAlias.isNullOrBlank() &&
+            !productionKeyPassword.isNullOrBlank()
+        ) {
+            create("productionRelease") {
+                storeFile = file(productionKeystorePath)
+                storePassword = productionStorePassword
+                keyAlias = productionKeyAlias
+                keyPassword = productionKeyPassword
+            }
+        }
     }
 
     buildTypes {
@@ -44,7 +75,9 @@ android {
             signingConfig = signingConfigs.getByName("ciDebug")
         }
         release {
-            signingConfig = signingConfigs.getByName("ciDebug")
+            signingConfig =
+                signingConfigs.findByName("productionRelease")
+                    ?: signingConfigs.getByName("ciDebug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -93,4 +126,6 @@ dependencies {
     implementation("androidx.media3:media3-session:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
