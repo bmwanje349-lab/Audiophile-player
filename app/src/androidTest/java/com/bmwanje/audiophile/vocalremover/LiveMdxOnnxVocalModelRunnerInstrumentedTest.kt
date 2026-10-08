@@ -1,0 +1,78 @@
+package com.bmwanje.audiophile.vocalremover
+
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import kotlin.math.sin
+
+@RunWith(AndroidJUnit4::class)
+class LiveMdxOnnxVocalModelRunnerInstrumentedTest {
+
+    @Test
+    fun bundled9482RunsThroughTheAndroidOnnxRunner() {
+        val context =
+            InstrumentationRegistry
+                .getInstrumentation()
+                .targetContext
+
+        val spec = MdxModelSpec.LIGHT_9482
+        val model =
+            MdxModelManager.ensureInstalled(
+                context,
+                spec,
+            )
+
+        assertTrue(model.isFile)
+        assertEquals(spec.fileSizeBytes, model.length())
+        assertEquals(spec.sha256, MdxModelManager.sha256(model))
+
+        val runner =
+            LiveMdxOnnxVocalModelRunner(
+                modelPath = model.absolutePath,
+                modelSpec = spec,
+                cpuThreads = 1,
+            )
+
+        try {
+            val chunk = MdxStft(spec).chunkSizeSamples()
+            val sampleRate = MdxStft.SAMPLE_RATE.toDouble()
+
+            val left =
+                FloatArray(chunk) { index ->
+                    (
+                        0.18 * sin(
+                            2.0 * Math.PI * 440.0 *
+                                index.toDouble() / sampleRate,
+                        )
+                    ).toFloat()
+                }
+            val right =
+                FloatArray(chunk) { index ->
+                    (
+                        0.16 * sin(
+                            2.0 * Math.PI * 550.0 *
+                                index.toDouble() / sampleRate,
+                        )
+                    ).toFloat()
+                }
+
+            val output =
+                runner.separateChunk(
+                    left,
+                    right,
+                )
+
+            assertEquals(chunk, output.left.size)
+            assertEquals(chunk, output.right.size)
+            assertTrue(output.left.all { it.isFinite() })
+            assertTrue(output.right.all { it.isFinite() })
+            assertEquals(1L, runner.inferenceCount())
+            assertTrue(runner.inferenceBackend().isNotBlank())
+        } finally {
+            runner.close()
+        }
+    }
+}
