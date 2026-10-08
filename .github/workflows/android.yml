@@ -273,7 +273,7 @@ jobs:
           if-no-files-found: error
 
   runtime-smoke:
-    timeout-minutes: 12
+    timeout-minutes: 30
     needs:
       - check-model
       - build
@@ -305,6 +305,21 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Enable KVM access for the Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -e /dev/kvm ]]; then
+            echo "::error::This runner does not expose /dev/kvm. The x86_64 Android emulator requires hardware virtualization."
+            exit 1
+          fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo chmod 0666 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          ls -l /dev/kvm
+
       - name: Run Android runtime smoke tests on API 35
         uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
@@ -316,8 +331,8 @@ jobs:
           ram-size: 4096M
           heap-size: 1024M
           force-avd-creation: true
-          emulator-boot-timeout: 1200
-          disable-linux-hw-accel: false
+          emulator-boot-timeout: 600
+          disable-linux-hw-accel: auto
           disable-animations: true
           emulator-options: >-
             -no-window
