@@ -273,6 +273,7 @@ jobs:
           if-no-files-found: error
 
   runtime-smoke:
+    timeout-minutes: 12
     needs:
       - check-model
       - build
