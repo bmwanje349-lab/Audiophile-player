@@ -12,6 +12,7 @@ import com.bmwanje.audiophile.vocalremover.MdxModelSpec
 import com.bmwanje.audiophile.vocalremover.MdxSeparatorCore
 import com.bmwanje.audiophile.vocalremover.NativeVocalRemover
 import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
+import com.example.musicplayer.vocalremoverui.VocalRemoverActivity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
