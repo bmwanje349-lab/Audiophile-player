@@ -142,6 +142,31 @@ internal fun calculateLiveKaraokeSafeBufferFrames(
 internal fun audioTrackPlaybackHeadFrames(rawPosition: Int): Long =
     rawPosition.toLong() and 0xFFFF_FFFFL
 
+internal fun calculateLiveKaraokePrerollFrames(
+    playbackStartMs: Long,
+    actualDecodeStartUs: Long,
+    sampleRate: Int,
+): Int {
+    require(playbackStartMs >= 0L)
+    require(actualDecodeStartUs >= 0L)
+    require(sampleRate > 0)
+
+    val prerollUs =
+        (
+            playbackStartMs * 1_000L -
+                actualDecodeStartUs
+        )
+            .coerceAtLeast(0L)
+
+    return (
+        prerollUs.toDouble() *
+            sampleRate.toDouble() /
+            1_000_000.0
+        )
+            .roundToInt()
+            .coerceAtLeast(0)
+}
+
 internal fun liveKaraokePositionMs(
     playbackStartMs: Long,
     playbackFrames: Long,
@@ -522,21 +547,12 @@ class LiveKaraokeEngine(
                 val actualDecodeStartUs =
                     extractor.sampleTime.coerceAtLeast(0L)
 
-                val prerollUs =
-                    (
-                        playbackStartMs * 1_000L -
-                            actualDecodeStartUs
-                    )
-                        .coerceAtLeast(0L)
-
                 droppedPrerollFrames =
-                    (
-                        prerollUs.toDouble() *
-                            sourceSampleRate.toDouble() /
-                            1_000_000.0
+                    calculateLiveKaraokePrerollFrames(
+                        playbackStartMs = playbackStartMs,
+                        actualDecodeStartUs = actualDecodeStartUs,
+                        sampleRate = sourceSampleRate,
                     )
-                        .roundToInt()
-                        .coerceAtLeast(0)
 
                 state = State.BUFFERING
                 if (isCurrent(id)) {
