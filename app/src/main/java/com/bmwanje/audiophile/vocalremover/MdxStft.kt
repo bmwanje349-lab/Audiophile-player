@@ -49,20 +49,6 @@ class MdxStft(private val spec: MdxModelSpec) {
     }
     private val fft = FloatFFT_1D(n.toLong())
 
-    /*
-     * MDX windows are large (~8 MiB of tensor data). Reusing host-side
-     * scratch arrays avoids repeated multi-megabyte allocations on every
-     * inference window, reducing GC pressure in the live producer.
-     */
-    private val paddedLeft = FloatArray(chunkSize + 2 * centerPad)
-    private val paddedRight = FloatArray(chunkSize + 2 * centerPad)
-    private val forwardFrame = FloatArray(2 * n)
-    private val inverseFrame = FloatArray(2 * n)
-    private val inverseAccumLeft = FloatArray(chunkSize + 2 * centerPad)
-    private val inverseAccumRight = FloatArray(chunkSize + 2 * centerPad)
-    private val inverseEnvelopeLeft = FloatArray(chunkSize + 2 * centerPad)
-    private val inverseEnvelopeRight = FloatArray(chunkSize + 2 * centerPad)
-
     init {
         require(n % 2 == 0) { "MDX FFT size must be even" }
         require(dimF in 1 until nBins) {
@@ -100,41 +86,25 @@ class MdxStft(private val spec: MdxModelSpec) {
     fun tensorSize(): Int = tensorSize
 
     fun forward(left: FloatArray, right: FloatArray): Spectrogram {
-        val out = FloatArray(tensorSize)
-        forwardInto(left, right, out)
-        return Spectrogram(out)
-    }
-
-    /*
-     * Allocation-free forward transform into caller-owned scratch storage.
-     * The allocation-returning API remains intact for the offline path.
-     */
-    fun forwardInto(
-        left: FloatArray,
-        right: FloatArray,
-        out: FloatArray,
-    ) {
         require(left.size == chunkSize && right.size == chunkSize) {
             "Expected $chunkSize samples per channel"
         }
-        require(out.size == tensorSize) {
-            "Expected tensor size " + tensorSize + ", got " + out.size
-        }
 
-        writeChannel(left, paddedLeft, out, planeBase = 0)
-        writeChannel(right, paddedRight, out, planeBase = 2)
+        val out = FloatArray(tensorSize)
+        writeChannel(left, out, planeBase = 0)
+        writeChannel(right, out, planeBase = 2)
+        return Spectrogram(out)
     }
 
     private fun writeChannel(
         input: FloatArray,
-        padded: FloatArray,
         out: FloatArray,
         planeBase: Int,
     ) {
         // torch.stft(..., center=True, pad_mode='reflect') performs a
         // reflect-pad of n_fft/2 on both sides before framing.
-        reflectPadInto(input, padded)
-        val frame = forwardFrame
+        val padded = reflectPad(input)
+        val frame = FloatArray(2 * n)
         val realBase = planeBase * dimF * dimT
         val imagBase = (planeBase + 1) * dimF * dimT
 
@@ -162,37 +132,23 @@ class MdxStft(private val spec: MdxModelSpec) {
             "Expected tensor size ${tensorSize}, got ${spectrogram.data.size}"
         }
 
-        val left =
-            inverseChannel(
-                spectrogram.data,
-                planeBase = 0,
-                accum = inverseAccumLeft,
-                envelope = inverseEnvelopeLeft,
-            )
-        val right =
-            inverseChannel(
-                spectrogram.data,
-                planeBase = 2,
-                accum = inverseAccumRight,
-                envelope = inverseEnvelopeRight,
-            )
+        val left = inverseChannel(spectrogram.data, 0)
+        val right = inverseChannel(spectrogram.data, 2)
         return StereoChunk(left, right)
     }
 
     private fun inverseChannel(
         specData: FloatArray,
         planeBase: Int,
-        accum: FloatArray,
-        envelope: FloatArray,
     ): FloatArray {
         /*
          * UVR concatenates [dimF bins] with zeros up to n_fft/2+1 bins, then
-         * performs a centered iSTFT. Reuse the large OLA work buffers so each
-         * MDX window does not allocate several additional large arrays.
+         * performs a centered iSTFT. Build that full complex spectrum explicitly
+         * for JTransforms' complexInverse().
          */
-        java.util.Arrays.fill(accum, 0f)
-        java.util.Arrays.fill(envelope, 0f)
-        val frame = inverseFrame
+        val accum = FloatArray(chunkSize + 2 * centerPad)
+        val envelope = FloatArray(chunkSize + 2 * centerPad)
+        val frame = FloatArray(2 * n)
 
         val realBase = planeBase * dimF * dimT
         val imagBase = (planeBase + 1) * dimF * dimT
@@ -254,11 +210,8 @@ class MdxStft(private val spec: MdxModelSpec) {
         return out
     }
 
-    private fun reflectPadInto(
-        input: FloatArray,
-        out: FloatArray,
-    ) {
-        require(out.size == input.size + 2 * centerPad)
+    private fun reflectPad(input: FloatArray): FloatArray {
+        val out = FloatArray(input.size + 2 * centerPad)
         System.arraycopy(input, 0, out, centerPad, input.size)
 
         // Match torch's reflect padding: endpoint samples themselves are not
@@ -268,6 +221,7 @@ class MdxStft(private val spec: MdxModelSpec) {
             out[centerPad + input.size + j] =
                 input[input.size - 2 - j]
         }
+        return out
     }
 
     private fun finite(value: Float): Float =
