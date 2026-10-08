@@ -8,7 +8,6 @@ import com.bmwanje.audiophile.vocalremover.LiveStreamingVocalRemover
 import com.bmwanje.audiophile.vocalremover.MdxModelManager
 import com.bmwanje.audiophile.vocalremover.MdxModelSpec
 import com.bmwanje.audiophile.vocalremover.MdxSeparatorCore
-import com.bmwanje.audiophile.vocalremover.LiveKaraokeSettingsSnapshot
 import com.bmwanje.audiophile.vocalremover.NativeVocalRemover
 import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
 import org.junit.Assert.assertEquals
@@ -47,12 +46,12 @@ class LiveKaraokeAndroidInstrumentationTest {
 
             val left = FloatArray(n) { i ->
                 (0.20 * sin(
-                    2.0 * PI * 440.0 * i / stft.SAMPLE_RATE
+                    2.0 * PI * 440.0 * i / com.bmwanje.audiophile.vocalremover.LiveMdxStft.SAMPLE_RATE
                 )).toFloat()
             }
             val right = FloatArray(n) { i ->
                 (0.16 * sin(
-                    2.0 * PI * 550.0 * i / stft.SAMPLE_RATE
+                    2.0 * PI * 550.0 * i / com.bmwanje.audiophile.vocalremover.LiveMdxStft.SAMPLE_RATE
                 )).toFloat()
             }
 
@@ -88,12 +87,12 @@ class LiveKaraokeAndroidInstrumentationTest {
                 VocalSeparatorCore.Stereo(
                     left = FloatArray(inputSamples) { i ->
                         (0.18 * sin(
-                            2.0 * PI * 330.0 * i / stft.SAMPLE_RATE
+                            2.0 * PI * 330.0 * i / com.bmwanje.audiophile.vocalremover.LiveMdxStft.SAMPLE_RATE
                         )).toFloat()
                     },
                     right = FloatArray(inputSamples) { i ->
                         (0.15 * sin(
-                            2.0 * PI * 495.0 * i / stft.SAMPLE_RATE
+                            2.0 * PI * 495.0 * i / com.bmwanje.audiophile.vocalremover.LiveMdxStft.SAMPLE_RATE
                         )).toFloat()
                     },
                 )
