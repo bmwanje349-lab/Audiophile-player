@@ -68,6 +68,76 @@ internal fun calculateLiveKaraokeStartupBufferFrames(
     )
 }
 
+/**
+ * Computes the one-time safety buffer needed for a stream whose measured
+ * production rate is [measuredProducerRate] times real time.
+ *
+ * The inequality is:
+ *
+ *   startupBuffer >= remainingDuration * (1 - rate) + safetyMargin
+ *
+ * for rate < 1.0. At or above real time, the fixed startup minimum is enough.
+ *
+ * This target is calculated once after the throughput calibration window is
+ * complete. It must never change after playback starts.
+ */
+internal fun calculateLiveKaraokeSafeBufferFrames(
+    sourceSampleRate: Int,
+    generatedPerWindow: Int,
+    startupBufferSeconds: Int,
+    startupBufferWindows: Int,
+    remainingSeconds: Double,
+    measuredProducerRate: Double,
+    safetyMarginSeconds: Double,
+    maxLookaheadFrames: Int,
+): Int {
+    require(sourceSampleRate > 0)
+    require(generatedPerWindow > 0)
+    require(startupBufferSeconds > 0)
+    require(startupBufferWindows > 0)
+    require(remainingSeconds >= 0.0)
+    require(measuredProducerRate.isFinite() && measuredProducerRate > 0.0)
+    require(safetyMarginSeconds >= 0.0)
+    require(maxLookaheadFrames > 0)
+
+    val fixedMinimumFrames =
+        calculateLiveKaraokeStartupBufferFrames(
+            sourceSampleRate = sourceSampleRate,
+            generatedPerWindow = generatedPerWindow,
+            startupBufferSeconds = startupBufferSeconds,
+            startupBufferWindows = startupBufferWindows,
+            maxLookaheadFrames = maxLookaheadFrames,
+        )
+
+    val requiredSeconds =
+        if (measuredProducerRate < 1.0) {
+            max(
+                startupBufferSeconds.toDouble(),
+                remainingSeconds *
+                    (1.0 - measuredProducerRate) +
+                    safetyMarginSeconds,
+            )
+        } else {
+            startupBufferSeconds.toDouble()
+        }
+
+    val timeBased =
+        (
+            sourceSampleRate.toDouble() *
+                requiredSeconds
+        )
+            .roundToInt()
+            .coerceAtLeast(1)
+
+    return min(
+        maxLookaheadFrames,
+        max(
+            fixedMinimumFrames,
+            timeBased,
+        ),
+    )
+}
+
 internal fun audioTrackPlaybackHeadFrames(rawPosition: Int): Long =
     rawPosition.toLong() and 0xFFFF_FFFFL
 
@@ -151,6 +221,8 @@ class LiveKaraokeEngine(
         const val MAX_LOOKAHEAD_FRAMES = 5_292_000 // ~120 s @ 44.1 kHz
         const val STARTUP_BUFFER_SECONDS = 30
         const val STARTUP_BUFFER_WINDOWS = 5
+        const val RATE_ESTIMATION_MIN_SECONDS = 10.0
+        const val LIVE_SAFETY_MARGIN_SECONDS = 6.0
         const val AUDIO_TRACK_BUFFER_SECONDS = 6
         const val MAX_AUDIO_DRAIN_WAIT_MS = 15_000L
         const val UI_UPDATE_INTERVAL_MS = 250L
@@ -280,6 +352,14 @@ class LiveKaraokeEngine(
         private var producerFinished = false
 
         private var lastUiUpdateNs = 0L
+
+        @Volatile
+        private var estimatedProducerRate = Double.NaN
+
+        private var producerRateStartNs = 0L
+        private var producerRateFrames = 0L
+        private var startupTargetFrames = 0
+        private var startupTargetFinalized = false
 
         private val cancelled = AtomicBoolean(false)
         private val queue =
@@ -567,8 +647,12 @@ class LiveKaraokeEngine(
                         val required =
                             initialBufferFrames()
                         val ready =
-                            buffered >= required ||
-                                (producerFinished && buffered > 0)
+                            if (producerFinished) {
+                                buffered > 0
+                            } else {
+                                startupTargetFinalized &&
+                                    buffered >= required
+                            }
 
                         if (!ready) {
                             val nowNs = System.nanoTime()
@@ -584,11 +668,19 @@ class LiveKaraokeEngine(
                                 lastUiUpdateNs = nowNs
                                 listener.onState(
                                     State.BUFFERING,
-                                    "Building a safe instrumental buffer — " +
-                                        bufferedSeconds(buffered) +
-                                        " / " +
-                                        bufferedSeconds(required) +
-                                        " s",
+                                    if (startupTargetFinalized) {
+                                        "Building a safe instrumental buffer — " +
+                                            bufferedSeconds(buffered) +
+                                            " / " +
+                                            bufferedSeconds(required) +
+                                            " s"
+                                    } else {
+                                        "Calibrating MDX throughput — " +
+                                            bufferedSeconds(buffered) +
+                                            " / " +
+                                            bufferedSeconds(required) +
+                                            " s minimum"
+                                    },
                                 )
                                 listener.onProgress(
                                     playbackPositionMs(),
@@ -784,13 +876,98 @@ class LiveKaraokeEngine(
                     .roundToInt()
                     .coerceAtLeast(1)
 
-            return calculateLiveKaraokeStartupBufferFrames(
-                sourceSampleRate = sourceSampleRate,
-                generatedPerWindow = generatedPerWindow,
-                startupBufferSeconds = STARTUP_BUFFER_SECONDS,
-                startupBufferWindows = STARTUP_BUFFER_WINDOWS,
-                maxLookaheadFrames = MAX_LOOKAHEAD_FRAMES,
-            )
+            if (startupTargetFinalized) {
+                return startupTargetFrames
+            }
+
+            val measuredRate =
+                estimatedProducerRate
+                    .takeIf { it.isFinite() && it > 0.0 }
+
+            if (measuredRate == null) {
+                return calculateLiveKaraokeStartupBufferFrames(
+                    sourceSampleRate = sourceSampleRate,
+                    generatedPerWindow = generatedPerWindow,
+                    startupBufferSeconds = STARTUP_BUFFER_SECONDS,
+                    startupBufferWindows = STARTUP_BUFFER_WINDOWS,
+                    maxLookaheadFrames = MAX_LOOKAHEAD_FRAMES,
+                )
+            }
+
+            val remainingSeconds =
+                (
+                    durationMs
+                        .coerceAtLeast(0L)
+                        .minus(playbackStartMs.coerceAtLeast(0L))
+                )
+                    .toDouble() /
+                    1000.0
+
+            startupTargetFrames =
+                calculateLiveKaraokeSafeBufferFrames(
+                    sourceSampleRate = sourceSampleRate,
+                    generatedPerWindow = generatedPerWindow,
+                    startupBufferSeconds = STARTUP_BUFFER_SECONDS,
+                    startupBufferWindows = STARTUP_BUFFER_WINDOWS,
+                    remainingSeconds = remainingSeconds,
+                    measuredProducerRate = measuredRate,
+                    safetyMarginSeconds = LIVE_SAFETY_MARGIN_SECONDS,
+                    maxLookaheadFrames = MAX_LOOKAHEAD_FRAMES,
+                )
+            startupTargetFinalized = true
+            return startupTargetFrames
+        }
+
+        private fun noteProducerThroughput(
+            emittedFrames: Int,
+        ) {
+            val now = System.nanoTime()
+
+            if (producerRateStartNs == 0L) {
+                producerRateStartNs = now
+            }
+
+            producerRateFrames += emittedFrames.toLong()
+
+            if (estimatedProducerRate.isFinite()) {
+                return
+            }
+
+            val minimumFrames =
+                (
+                    sourceSampleRate.toDouble() *
+                        RATE_ESTIMATION_MIN_SECONDS
+                )
+                    .roundToInt()
+                    .toLong()
+                    .coerceAtLeast(1L)
+
+            if (producerRateFrames < minimumFrames) {
+                return
+            }
+
+            val elapsedSeconds =
+                (
+                    now - producerRateStartNs
+                )
+                    .coerceAtLeast(1L)
+                    .toDouble() /
+                    1_000_000_000.0
+
+            if (elapsedSeconds <= 0.0) return
+
+            estimatedProducerRate =
+                (
+                    producerRateFrames.toDouble() /
+                        sourceSampleRate.toDouble()
+                ) /
+                    elapsedSeconds
+
+            /*
+             * The target is intentionally frozen by initialBufferFrames() the
+             * next time the consumer checks it. Never mutate the target after
+             * playback has started.
+             */
         }
 
         private fun bufferedSeconds(frames: Int): String {
@@ -827,6 +1004,8 @@ class LiveKaraokeEngine(
             }
 
             if (count <= 0) return
+
+            noteProducerThroughput(count)
 
             val pcm = ShortArray(count * 2)
             var output = 0
