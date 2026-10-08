@@ -593,7 +593,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
 
     private fun recoverNormalPlayback() {
         runCatching {
-            val controller =
+            val future =
                 androidx.media3.session.MediaController.Builder(
                     this,
                     androidx.media3.session.SessionToken(
@@ -605,39 +605,27 @@ class LiveKaraokeActivity : AppCompatActivity() {
                     ),
                 ).buildAsync()
 
-            controller.addListener(
-                object : androidx.media3.common.Player.Listener {
-                    override fun onEvents(
-                        player: androidx.media3.common.Player,
-                        events: androidx.media3.common.Player.Events,
-                    ) {
+            future.addListener(
+                {
+                    runCatching {
+                        val controller = future.get()
                         val target =
                             if (lastLivePositionMs > 0L) {
                                 lastLivePositionMs
                             } else {
                                 initialPositionMs
                             }
-                        player.seekTo(target.coerceAtLeast(0L))
-                        player.play()
+                        controller.seekTo(target.coerceAtLeast(0L))
+                        controller.play()
                         controller.release()
                     }
-                }
+                },
+                ContextCompat.getMainExecutor(this),
             )
-            controller.addListener(object : androidx.media3.common.Player.Listener {})
-            ContextCompat.getMainExecutor(this).execute {
-                runCatching {
-                    val connected = controller.get()
-                    val target =
-                        if (lastLivePositionMs > 0L) {
-                            lastLivePositionMs
-                        } else {
-                            initialPositionMs
-                        }
-                    connected.seekTo(target.coerceAtLeast(0L))
-                    connected.play()
-                    connected.release()
-                }
-            }
+        }.onFailure { throwable ->
+            status.text =
+                "Normal playback could not resume: " +
+                    (throwable.message ?: throwable.javaClass.simpleName)
         }
     }
 
