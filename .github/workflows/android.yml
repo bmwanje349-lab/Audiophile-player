@@ -114,6 +114,7 @@ jobs:
 
       - name: Run Android instrumentation smoke tests
         uses: reactivecircus/android-emulator-runner@v2
+        timeout-minutes: 15
         with:
           api-level: 35
           target: google_apis
