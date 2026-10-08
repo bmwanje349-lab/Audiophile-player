@@ -68,6 +68,31 @@ internal fun calculateLiveKaraokeStartupBufferFrames(
     )
 }
 
+internal fun audioTrackPlaybackHeadFrames(rawPosition: Int): Long =
+    rawPosition.toLong() and 0xFFFF_FFFFL
+
+internal fun liveKaraokePositionMs(
+    playbackStartMs: Long,
+    playbackFrames: Long,
+    sampleRate: Int,
+    durationMs: Long,
+): Long {
+    require(playbackStartMs >= 0L)
+    require(playbackFrames >= 0L)
+    require(sampleRate > 0)
+
+    val elapsedMs =
+        (playbackFrames.toDouble() * 1000.0 /
+            sampleRate.toDouble())
+            .roundToInt()
+            .toLong()
+
+    return (playbackStartMs + elapsedMs)
+        .coerceAtMost(
+            durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE,
+        )
+}
+
 /**
  * True progressive karaoke path.
  *
@@ -127,6 +152,7 @@ class LiveKaraokeEngine(
         const val STARTUP_BUFFER_SECONDS = 30
         const val STARTUP_BUFFER_WINDOWS = 5
         const val AUDIO_TRACK_BUFFER_SECONDS = 6
+        const val MAX_AUDIO_DRAIN_WAIT_MS = 15_000L
         const val UI_UPDATE_INTERVAL_MS = 250L
         const val SEEK_CONTEXT_MARGIN_MS = 100L
     }
@@ -241,7 +267,14 @@ class LiveKaraokeEngine(
         private var playbackStartMs = requestedPositionMs
 
         @Volatile
-        private var playedFrames = 0L
+        /*
+         * Frames submitted to AudioTrack are not the same as frames already
+         * heard by the user. AudioTrack can hold several seconds of PCM.
+         * Keep this count only for the completion/drain contract; progress is
+         * derived from AudioTrack.playbackHeadPosition.
+         */
+        @Volatile
+        private var submittedFrames = 0L
 
         @Volatile
         private var producerFinished = false
@@ -599,7 +632,7 @@ class LiveKaraokeEngine(
                         }
 
                         offset += written
-                        playedFrames +=
+                        submittedFrames +=
                             (written / 2).toLong()
 
                         val nowNs = System.nanoTime()
@@ -624,6 +657,8 @@ class LiveKaraokeEngine(
                     !cancelled.get() &&
                     isCurrent(id)
                 ) {
+                    waitForAudioTrackDrain()
+
                     runCatching { audioTrack?.stop() }
                     runCatching { audioTrack?.release() }
                     audioTrack = null
@@ -669,20 +704,73 @@ class LiveKaraokeEngine(
             runCatching { track.release() }
         }
 
-        private fun playbackPositionMs(): Long =
-            (
-                playbackStartMs +
-                    (
-                        playedFrames.toDouble() *
-                            1000.0 /
-                            sourceSampleRate.toDouble()
+        private fun playbackPositionMs(): Long {
+            val track =
+                audioTrack
+
+            val played =
+                if (track != null && consumerStarted) {
+                    audioTrackPlaybackHeadFrames(
+                        runCatching {
+                            track.playbackHeadPosition
+                        }.getOrDefault(0),
                     )
-                        .toLong()
+                } else {
+                    0L
+                }
+
+            return liveKaraokePositionMs(
+                playbackStartMs = playbackStartMs,
+                playbackFrames = played,
+                sampleRate = sourceSampleRate,
+                durationMs = durationMs,
             )
-                .coerceAtMost(
-                    durationMs.takeIf { it > 0L }
-                        ?: Long.MAX_VALUE,
-                )
+        }
+
+        private fun waitForAudioTrackDrain() {
+            val track =
+                audioTrack ?: return
+
+            val deadlineNs =
+                System.nanoTime() +
+                    MAX_AUDIO_DRAIN_WAIT_MS * 1_000_000L
+
+            while (
+                !cancelled.get() &&
+                isCurrent(id) &&
+                System.nanoTime() < deadlineNs
+            ) {
+                val head =
+                    audioTrackPlaybackHeadFrames(
+                        runCatching {
+                            track.playbackHeadPosition
+                        }.getOrDefault(0),
+                    )
+
+                if (head >= submittedFrames) {
+                    return
+                }
+
+                val nowNs = System.nanoTime()
+                if (
+                    nowNs - lastUiUpdateNs >=
+                    UI_UPDATE_INTERVAL_MS * 1_000_000L
+                ) {
+                    lastUiUpdateNs = nowNs
+                    listener.onProgress(
+                        liveKaraokePositionMs(
+                            playbackStartMs = playbackStartMs,
+                            playbackFrames = head,
+                            sampleRate = sourceSampleRate,
+                            durationMs = durationMs,
+                        ),
+                        durationMs,
+                    )
+                }
+
+                Thread.sleep(20L)
+            }
+        }
 
         private fun initialBufferFrames(): Int {
             val generatedPerWindow =
