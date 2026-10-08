@@ -74,6 +74,7 @@ class AudioRenderRepository(
                 configurePipeline(localPipeline)
                 ensureNotInterrupted()
                 localPipeline.loadModel()
+                ensureNotInterrupted()
 
                 val output =
                     createOutputFile(titleSuffix)
