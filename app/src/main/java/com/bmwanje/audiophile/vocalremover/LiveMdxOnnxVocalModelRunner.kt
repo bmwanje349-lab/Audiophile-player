@@ -212,6 +212,7 @@ internal class LiveMdxOnnxVocalModelRunner(
         }
     }
 
+    @Synchronized
     override fun close() {
         runCatching { session.close() }
             .also { runCatching { sessionOptions.close() } }
