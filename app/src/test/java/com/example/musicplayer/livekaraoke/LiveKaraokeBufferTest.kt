@@ -38,8 +38,34 @@ class LiveKaraokeBufferTest {
             )
 
         assertEquals(
-            4_864_406,
+            4_864_407,
             frames,
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun impossibleThroughputIsRejectedInsteadOfStartingUnsafely() {
+        calculateLiveKaraokeSafeBufferFrames(
+            sourceSampleRate = 44_100,
+            generatedPerWindow = 254_976,
+            startupBufferSeconds = 30,
+            startupBufferWindows = 5,
+            remainingSeconds = 212.0,
+            measuredProducerRate = 0.40,
+            safetyMarginSeconds = 6.0,
+            maxLookaheadFrames = 5_292_000,
+        )
+    }
+
+    @Test
+    fun lookaheadCapacityScalesWithSourceRate() {
+        assertEquals(
+            5_292_000,
+            maxLiveKaraokeLookaheadFrames(44_100),
+        )
+        assertEquals(
+            5_760_000,
+            maxLiveKaraokeLookaheadFrames(48_000),
         )
     }
 
