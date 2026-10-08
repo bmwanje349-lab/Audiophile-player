@@ -25,6 +25,7 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.ceil
 import kotlin.math.max
@@ -398,7 +399,7 @@ class LiveKaraokeEngine(
     fun start(uri: Uri, positionMs: Long = 0L, settings: Settings = Settings()) {
         synchronized(lock) {
             check(!closed) { "Live karaoke engine is closed" }
-            stopLocked(keepNeuralCache = false)
+            stopLocked()
 
             generation += 1L
             val next =
@@ -429,7 +430,7 @@ class LiveKaraokeEngine(
     fun seekTo(positionMs: Long) {
         synchronized(lock) {
             val current = session ?: return
-            stopLocked(keepNeuralCache = true)
+            stopLocked()
 
             generation += 1L
             val next =
@@ -451,7 +452,7 @@ class LiveKaraokeEngine(
 
     fun stop() {
         synchronized(lock) {
-            stopLocked(keepNeuralCache = false)
+            stopLocked()
             generation += 1L
         }
     }
@@ -462,19 +463,30 @@ class LiveKaraokeEngine(
         }
 
     override fun close() {
-        synchronized(lock) {
-            if (closed) return
-            closed = true
-            stopLocked(keepNeuralCache = false)
-        }
+        val sessionToAwait =
+            synchronized(lock) {
+                if (closed) {
+                    null
+                } else {
+                    closed = true
+                    val current = session
+                    stopLocked()
+                    current
+                }
+            }
+
+        closeCachedLiveRunnerAsync(sessionToAwait)
     }
 
-    private fun stopLocked(keepNeuralCache: Boolean = false) {
+    private fun stopLocked() {
         session?.stop()
         session = null
-        if (!keepNeuralCache) {
-            closeCachedLiveRunner()
-        }
+        /*
+         * Keep the verified ONNX session warm across stop/start and seek
+         * transitions. Releasing it here can synchronously wait for an
+         * in-flight inference and would make lifecycle calls block.
+         * The final close() above releases it asynchronously.
+         */
         listener.onState(State.STOPPED, "Live karaoke stopped")
     }
 
@@ -501,11 +513,30 @@ class LiveKaraokeEngine(
         }
     }
 
-    private fun closeCachedLiveRunner() {
-        val runner = cachedLiveRunner ?: return
-        cachedLiveRunner = null
-        runCatching { runner.clearProfiler() }
-        runCatching { runner.close() }
+    private fun closeCachedLiveRunnerAsync(sessionToAwait: Session?) {
+        val runner =
+            synchronized(lock) {
+                val current = cachedLiveRunner
+                cachedLiveRunner = null
+                current
+            } ?: return
+
+        Thread(
+            {
+                /*
+                 * A previous session may still be unwinding a synchronized
+                 * ONNX call. Wait off the caller thread. The synchronized
+                 * runner.close() remains the final safety barrier.
+                 */
+                sessionToAwait?.awaitTermination(30_000L)
+                runCatching { runner.clearProfiler() }
+                runCatching { runner.close() }
+            },
+            "Audiophile-LiveKaraoke-RunnerCleanup",
+        ).apply {
+            isDaemon = true
+            start()
+        }
     }
 
     private fun isCurrent(id: Long): Boolean =
@@ -648,13 +679,26 @@ class LiveKaraokeEngine(
             if (!cancelled.compareAndSet(false, true)) return
 
             queue?.cancel()
+            decodedBlocks.clear()
             runCatching { audioTrack?.pause() }
             runCatching { audioTrack?.stop() }
             executor?.shutdownNow()
 
-            // Do not block while holding the engine lock. The cached ONNX runner
-            // itself serializes inference, so a new seek session can safely wait
-            // for an in-flight call to unwind.
+            /*
+             * Do not await here. stop()/seek are lifecycle operations and must
+             * return promptly. The final engine close performs the worker wait
+             * on a daemon cleanup thread before releasing ORT.
+             */
+        }
+
+        fun awaitTermination(timeoutMs: Long): Boolean {
+            val currentExecutor = executor ?: return true
+            return runCatching {
+                currentExecutor.awaitTermination(
+                    timeoutMs,
+                    TimeUnit.MILLISECONDS,
+                )
+            }.getOrDefault(true)
         }
 
         private fun produce() {
