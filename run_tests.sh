@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
 GRADLE_BIN="${GRADLE_BIN:-$ROOT/gradlew}"
 
 echo "[1] Stale LiteRT/TFLite reference check"
