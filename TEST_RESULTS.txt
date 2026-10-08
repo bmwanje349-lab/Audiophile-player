@@ -38,9 +38,12 @@ The current branch includes the ONNX dynamic-batch validation and HTTP 416 downl
 
 ## Acceptance rule
 
-Do not mark the integration as production-ready until the current GitHub Actions run passes both:
+Do not mark the integration as production-ready until the current GitHub Actions run passes all of the following:
 
-- the real ONNX model smoke test; and
-- `gradle :app:assembleDebug`.
+- the real ONNX model smoke test;
+- `gradle :app:testDebugUnitTest`;
+- `gradle :app:assembleDebug`;
+- CI-signed release APK payload/signature verification; and
+- Android instrumentation covering real bundled-model inference, the streaming separator, and the neural-to-Fast Live handoff timeline.
 
-Real-device testing is still required for final performance, thermal and music-quality acceptance.
+The production `release` variant is wired for environment-provided signing credentials. Real-device testing is still required for final physical-phone performance, long-song stability, thermal throttling, low-memory behavior, pause/resume, seek/stop races, and subjective music-quality acceptance.
