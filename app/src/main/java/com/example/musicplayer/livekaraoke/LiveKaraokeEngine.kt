@@ -196,6 +196,19 @@ internal class NeuralLiveNotViableException(
     message: String,
 ) : IllegalStateException(message)
 
+internal fun recommendedLiveKaraokeCpuThreads(
+    availableProcessors: Int,
+): Int {
+    require(availableProcessors > 0)
+    /*
+     * Reserve roughly half of the logical CPUs for decoding, AudioTrack,
+     * Android housekeeping, and ORT/OS overhead while still scaling XNNPACK
+     * beyond the old fixed two-thread setting on larger phones.
+     */
+    return ((availableProcessors + 1) / 2)
+        .coerceIn(1, 4)
+}
+
 internal fun isNeuralLiveStartupViable(
     measuredProducerRate: Double,
     requiredFrames: Long,
@@ -679,7 +692,10 @@ class LiveKaraokeEngine(
                         appContext,
                         sourceSampleRate,
                         modelSpec,
-                        cpuThreads = 2,
+                        cpuThreads =
+                            recommendedLiveKaraokeCpuThreads(
+                                Runtime.getRuntime().availableProcessors(),
+                            ),
                     )
                 pipeline = localPipeline
 
