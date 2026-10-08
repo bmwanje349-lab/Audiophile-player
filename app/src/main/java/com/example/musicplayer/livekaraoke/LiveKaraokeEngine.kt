@@ -318,8 +318,8 @@ class LiveKaraokeEngine(
         const val LIVE_SAFETY_MARGIN_SECONDS = 6.0
         const val AUDIO_TRACK_BUFFER_SECONDS = 2
         const val NEURAL_CALIBRATION_TIMEOUT_MS = 12_000L
-        const val MIN_NEURAL_SUSTAINED_RATE = 0.85
-        const val MAX_NEURAL_STARTUP_SECONDS = 20.0
+        const val MIN_NEURAL_SUSTAINED_RATE = 0.95
+        const val MAX_NEURAL_STARTUP_SECONDS = 18.0
         const val DSP_STARTUP_BUFFER_SECONDS = 1
         const val MAX_AUDIO_DRAIN_WAIT_MS = 15_000L
         const val UI_UPDATE_INTERVAL_MS = 250L
