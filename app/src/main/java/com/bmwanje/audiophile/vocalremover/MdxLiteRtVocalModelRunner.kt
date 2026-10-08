@@ -25,16 +25,80 @@ class MdxOnnxVocalModelRunner(
     private val session: OrtSession
     private val inputName: String
     private val outputName: String
+    private val xnnpackEnabled: Boolean
     private var inferenceCounter = 0L
 
     init {
-        sessionOptions = OrtSession.SessionOptions().apply {
-            setIntraOpNumThreads(cpuThreads.coerceAtLeast(1))
-            setInterOpNumThreads(1)
-        }
+        val requestedThreads = cpuThreads.coerceAtLeast(1)
+        var configuredOptions: OrtSession.SessionOptions? = null
+        var configuredSession: OrtSession? = null
+        var configuredWithXnnpack = false
 
         try {
-            session = environment.createSession(modelPath, sessionOptions)
+            /*
+             * XNNPACK is an optional accelerator in the Android ORT package.
+             * It has its own CPU thread pool, so keep ORT's intra-op pool at
+             * one thread when XNNPACK is active to avoid CPU oversubscription.
+             * The fallback below keeps the model fully functional if a build
+             * or device does not expose XNNPACK.
+             */
+            val xnnOptions = OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(1)
+                setInterOpNumThreads(1)
+                addConfigEntry(
+                    "session.intra_op.allow_spinning",
+                    "0",
+                )
+                addConfigEntry(
+                    "session.inter_op.allow_spinning",
+                    "0",
+                )
+                addXnnpack(
+                    mapOf(
+                        "intra_op_num_threads" to
+                            requestedThreads.toString(),
+                    )
+                )
+            }
+
+            try {
+                configuredSession =
+                    environment.createSession(
+                        modelPath,
+                        xnnOptions,
+                    )
+                configuredOptions = xnnOptions
+                configuredWithXnnpack = true
+            } catch (xnnFailure: Throwable) {
+                runCatching { xnnOptions.close() }
+
+                val cpuOptions = OrtSession.SessionOptions().apply {
+                    setIntraOpNumThreads(requestedThreads)
+                    setInterOpNumThreads(1)
+                }
+
+                try {
+                    configuredSession =
+                        environment.createSession(
+                            modelPath,
+                            cpuOptions,
+                        )
+                    configuredOptions = cpuOptions
+                } catch (cpuFailure: Throwable) {
+                    runCatching { cpuOptions.close() }
+                    cpuFailure.addSuppressed(xnnFailure)
+                    throw cpuFailure
+                }
+            }
+
+            sessionOptions =
+                configuredOptions
+                    ?: error("ONNX session options were not initialized")
+            session =
+                configuredSession
+                    ?: error("ONNX session was not initialized")
+            xnnpackEnabled = configuredWithXnnpack
+
             inputName = session.inputNames.singleOrNull()
                 ?: error("9482 ONNX model must expose exactly one input")
             outputName = session.outputNames.singleOrNull()
@@ -42,10 +106,12 @@ class MdxOnnxVocalModelRunner(
             validateTensor("input", session.inputInfo[inputName]?.info)
             validateTensor("output", session.outputInfo[outputName]?.info)
         } catch (throwable: Throwable) {
-            runCatching { sessionOptions.close() }
+            runCatching { configuredSession?.close() }
+            runCatching { configuredOptions?.close() }
             throw throwable
         }
     }
+
 
     @Synchronized
     override fun separateChunk(
@@ -83,6 +149,9 @@ class MdxOnnxVocalModelRunner(
 
     /** Number of real ONNX Runtime inference calls completed by this runner. */
     fun inferenceCount(): Long = synchronized(this) { inferenceCounter }
+
+    fun inferenceBackend(): String =
+        if (xnnpackEnabled) "XNNPACK" else "CPU"
 
     private fun validateTensor(role: String, info: ai.onnxruntime.ValueInfo?) {
         val tensorInfo = info as? TensorInfo
