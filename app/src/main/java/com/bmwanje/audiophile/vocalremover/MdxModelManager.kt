@@ -15,7 +15,9 @@ object MdxModelManager {
 
     fun isInstalled(context: Context, spec: MdxModelSpec): Boolean {
         val f = file(context, spec)
-        return f.isFile && sha256(f) == spec.sha256
+        return f.isFile &&
+            f.length() == spec.fileSizeBytes &&
+            sha256(f) == spec.sha256
     }
 
     /**
