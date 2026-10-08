@@ -234,6 +234,11 @@ class AudioRenderRepository(
                 -1L
             }
 
+        // The pipeline, WAV header and MDX resampler are built for the
+        // container-reported rate. If the decoder later outputs a different
+        // rate (e.g. HE-AAC/SBR) the render would silently change speed/pitch.
+        val containerSampleRate = sampleRate
+
         var inputEnded = false
         var outputEnded = false
         var decodedFrames = 0L
@@ -305,6 +310,11 @@ class AudioRenderRepository(
                             outputFormat.getIntegerSafely(
                                 MediaFormat.KEY_SAMPLE_RATE
                             ) ?: sampleRate
+
+                        require(sampleRate == containerSampleRate) {
+                            "Decoder sample rate ($sampleRate Hz) differs from the " +
+                                "container rate ($containerSampleRate Hz); this source is not supported"
+                        }
 
                         channels =
                             outputFormat.getIntegerSafely(
@@ -686,8 +696,7 @@ private class StreamingWavWriter(
                 safe * 32767f
             }
 
-        return scaled
-            .toInt()
+        return Math.round(scaled)
             .coerceIn(-32768, 32767)
             .toShort()
     }
