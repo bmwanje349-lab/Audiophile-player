@@ -113,12 +113,12 @@ class AudioRenderRepository(
 
                 ensureNotInterrupted()
                 wavWriter.finish()
-                writer = null
 
                 ensureNotInterrupted()
                 onMdxChunks(renderer.mdxInferenceCount())
                 onProgress(1f)
                 onReady(Uri.fromFile(output))
+                writer = null
             } catch (throwable: Throwable) {
                 if (!Thread.currentThread().isInterrupted) {
                     onError(throwable)
