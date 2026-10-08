@@ -192,6 +192,10 @@ internal fun calculateLiveKaraokeRequiredBufferFrames(
     )
 }
 
+internal class NeuralLiveNotViableException(
+    message: String,
+) : IllegalStateException(message)
+
 internal fun audioTrackPlaybackHeadFrames(rawPosition: Int): Long =
     rawPosition.toLong() and 0xFFFF_FFFFL
 
