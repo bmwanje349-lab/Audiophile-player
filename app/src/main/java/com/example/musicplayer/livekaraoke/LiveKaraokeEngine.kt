@@ -7,11 +7,15 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
 import android.os.Process
+import android.util.Log
+import com.bmwanje.audiophile.vocalremover.LiveMdxOnnxVocalModelRunner
+import com.bmwanje.audiophile.vocalremover.MdxModelManager
 import com.bmwanje.audiophile.vocalremover.MdxModelSpec
 import com.bmwanje.audiophile.vocalremover.MdxStft
-import com.bmwanje.audiophile.vocalremover.StreamingVocalRemover
-import com.bmwanje.audiophile.vocalremover.VocalRemoverPipeline
+import com.bmwanje.audiophile.vocalremover.NativeVocalRemover
 import com.bmwanje.audiophile.vocalremover.VocalSeparatorCore
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -363,6 +367,10 @@ class LiveKaraokeEngine(
         const val MAX_AUDIO_DRAIN_WAIT_MS = 15_000L
         const val UI_UPDATE_INTERVAL_MS = 250L
         const val SEEK_CONTEXT_MARGIN_MS = 100L
+        const val THERMAL_POLL_INTERVAL_MS = 1_000L
+        const val SUSTAINED_RATE_FALLBACK = 0.90
+        const val MIN_BUFFER_BEFORE_RATE_FALLBACK_SECONDS = 5.0
+        const val PROFILE_TAG = "LiveKaraoke"
     }
 
     private val lock = Any()
@@ -493,11 +501,17 @@ class LiveKaraokeEngine(
 
         @Volatile
         private var estimatedProducerRate = Double.NaN
+        private var rollingProducerRate = Double.NaN
+        private var thermalStatus: Int? = null
+        private var lastHealthPollNs = 0L
+        private var lastRateSampleNs = 0L
+        private var lastRateSampleFrames = 0L
 
         private var producerRateStartNs = 0L
         private var producerRateFrames = 0L
         private var startupTargetFrames = 0
         private var startupTargetFinalized = false
+        private val profiler = LiveKaraokeStageProfiler()
 
         private val cancelled = AtomicBoolean(false)
         private var queue: LivePcmQueue? = null
@@ -505,7 +519,6 @@ class LiveKaraokeEngine(
         private var executor: ExecutorService? = null
         private var inferenceFuture: Future<*>? = null
         private var audioTrack: AudioTrack? = null
-        private var pipeline: VocalRemoverPipeline? = null
         private var fastDsp: LiveDspFallbackProcessor? = null
         private var consumerStarted = false
         private var droppedPrerollFrames = 0
