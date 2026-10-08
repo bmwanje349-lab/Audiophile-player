@@ -998,7 +998,7 @@ class LiveKaraokeEngine(
                     remainingSeconds = remainingSeconds,
                     measuredProducerRate = measuredRate,
                     safetyMarginSeconds = LIVE_SAFETY_MARGIN_SECONDS,
-                    maxLookaheadFrames = MAX_LOOKAHEAD_FRAMES,
+                    maxLookaheadFrames = maxLookaheadFrames,
                 )
             startupTargetFinalized = true
             return startupTargetFrames
