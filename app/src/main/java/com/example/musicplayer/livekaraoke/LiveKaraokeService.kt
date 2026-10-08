@@ -351,6 +351,9 @@ synchronized(notificationLock) {
     }
 
     override fun onDestroy() {
+        synchronized(notificationLock) {
+            foregroundActive = false
+        }
         engine.close()
         listeners.clear()
         super.onDestroy()
