@@ -1,8 +1,16 @@
+import java.util.Base64
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+val stableDebugKeystore = rootProject.file("ci/audiophile-debug.keystore")
+if (!stableDebugKeystore.isFile) {
+    val encoded = rootProject.file("ci/audiophile-debug.keystore.b64").readText().trim()
+    stableDebugKeystore.parentFile.mkdirs()
+    stableDebugKeystore.writeBytes(Base64.getDecoder().decode(encoded))
 }
 
 android {
@@ -22,7 +30,19 @@ android {
         }
     }
 
+    signingConfigs {
+        create("ciDebug") {
+            storeFile = stableDebugKeystore
+            storePassword = "audiophile-debug"
+            keyAlias = "audiophile-debug"
+            keyPassword = "audiophile-debug"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("ciDebug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(

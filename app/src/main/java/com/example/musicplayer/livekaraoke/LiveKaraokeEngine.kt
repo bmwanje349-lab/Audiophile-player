@@ -642,6 +642,10 @@ class LiveKaraokeEngine(
                     MediaFormat.KEY_CHANNEL_COUNT
                 ) ?: 2
 
+            require(decoderChannels in 1..2) {
+                "Live Karaoke currently supports mono or stereo sources; decoder reported $decoderChannels channels"
+            }
+
             var decoderSampleRate =
                 inputFormat.getIntegerSafely(
                     MediaFormat.KEY_SAMPLE_RATE
@@ -716,6 +720,10 @@ class LiveKaraokeEngine(
                             outputFormat.getIntegerSafely(
                                 MediaFormat.KEY_CHANNEL_COUNT
                             ) ?: decoderChannels
+
+                        require(decoderChannels in 1..2) {
+                            "Live Karaoke currently supports mono or stereo sources; decoder reported $decoderChannels channels"
+                        }
 
                         encoding =
                             outputFormat.getIntegerSafely(

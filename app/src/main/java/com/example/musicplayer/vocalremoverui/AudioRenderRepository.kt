@@ -219,6 +219,10 @@ class AudioRenderRepository(
             inputFormat.getIntegerSafely(MediaFormat.KEY_CHANNEL_COUNT)
                 ?: error("Audio channel count is missing")
 
+        require(channels in 1..2) {
+            "AI Vocal Remover currently supports mono or stereo sources; decoder reported $channels channels"
+        }
+
         var encoding =
             inputFormat.getIntegerSafely(MediaFormat.KEY_PCM_ENCODING)
                 ?: AudioFormat.ENCODING_PCM_16BIT
@@ -306,6 +310,10 @@ class AudioRenderRepository(
                             outputFormat.getIntegerSafely(
                                 MediaFormat.KEY_CHANNEL_COUNT
                             ) ?: channels
+
+                        require(channels in 1..2) {
+                            "AI Vocal Remover currently supports mono or stereo sources; decoder reported $channels channels"
+                        }
 
                         encoding =
                             outputFormat.getIntegerSafely(

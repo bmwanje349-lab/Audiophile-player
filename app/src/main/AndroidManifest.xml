@@ -1,6 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -34,7 +33,7 @@
         </activity>
 
         <service
-            android:name=".LiveKaraokeService"
+            android:name=".livekaraoke.LiveKaraokeService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
