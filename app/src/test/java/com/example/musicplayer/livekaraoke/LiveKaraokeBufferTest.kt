@@ -60,11 +60,11 @@ class LiveKaraokeBufferTest {
     @Test
     fun lookaheadCapacityScalesWithSourceRate() {
         assertEquals(
-            5_292_000,
+            32 * 44_100,
             maxLiveKaraokeLookaheadFrames(44_100),
         )
         assertEquals(
-            5_760_000,
+            32 * 48_000,
             maxLiveKaraokeLookaheadFrames(48_000),
         )
     }
