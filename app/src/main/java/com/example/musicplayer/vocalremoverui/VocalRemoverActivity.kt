@@ -219,6 +219,10 @@ class VocalRemoverActivity :
         }
     }
 
+    override fun cancelRender() {
+        audioRenderRepository?.cancel()
+    }
+
     override fun playProcessedUri(
         uri: Uri,
     ) {
