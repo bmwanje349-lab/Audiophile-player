@@ -190,6 +190,8 @@ object MdxSeparatorCore {
         private val incomingR = FloatArray(generation + trim)
         private val historyL = FloatArray(overlap)
         private val historyR = FloatArray(overlap)
+        private val emitLeftScratch = FloatArray(OUTPUT_BLOCK)
+        private val emitRightScratch = FloatArray(OUTPUT_BLOCK)
 
         private var fill = 0
         private var processedAny = false
@@ -469,20 +471,25 @@ object MdxSeparatorCore {
 
             while (pos < count) {
                 val n = min(OUTPUT_BLOCK, count - pos)
-                val left = FloatArray(n)
-                val right = FloatArray(n)
-
                 for (i in 0 until n) {
-                    left[i] =
+                    emitLeftScratch[i] =
                         vocal.left[sourceOffset + pos + i] * gain
-                    right[i] =
+                    emitRightScratch[i] =
                         vocal.right[sourceOffset + pos + i] * gain
                 }
 
+                /*
+                 * emit() is synchronous: LiveStreamingVocalRemover immediately
+                 * consumes/copies the block into its bounded resampler/queue.
+                 * Reusing these two 8K buffers removes dozens of heap allocations
+                 * per MDX window.
+                 */
                 emit(
                     VocalSeparatorCore.Stereo(
-                        left,
-                        right,
+                        if (n == OUTPUT_BLOCK) emitLeftScratch
+                        else emitLeftScratch.copyOf(n),
+                        if (n == OUTPUT_BLOCK) emitRightScratch
+                        else emitRightScratch.copyOf(n),
                     )
                 )
                 pos += n
