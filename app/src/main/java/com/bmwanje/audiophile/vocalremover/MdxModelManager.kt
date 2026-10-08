@@ -67,6 +67,9 @@ object MdxModelManager {
 
         try {
             context.assets.open(spec.assetPath).use { input ->
+                // openFd() fails for APK-compressed assets (.onnx is compressed
+                // unless listed in noCompress), which left progress stuck at 0%.
+                // The pinned model size is known exactly, so fall back to it.
                 val total =
                     runCatching {
                         context.assets.openFd(spec.assetPath).use { it.length }
