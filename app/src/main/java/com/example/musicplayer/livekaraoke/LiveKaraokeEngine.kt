@@ -364,7 +364,6 @@ class LiveKaraokeEngine(
         @Volatile
         private var playbackStartMs = requestedPositionMs
 
-        @Volatile
         /*
          * Frames submitted to AudioTrack are not the same as frames already
          * heard by the user. AudioTrack can hold several seconds of PCM.
