@@ -27,8 +27,8 @@ internal class LiveStreamingVocalRemover(
         private const val MIX_QUEUE_MAX = 1_048_576
     }
 
-    private val mixQueue = StereoSampleQueue(MIX_QUEUE_INITIAL, MIX_QUEUE_MAX)
-    private val vocalQueue = StereoSampleQueue(MIX_QUEUE_INITIAL, MIX_QUEUE_MAX)
+    private val mixQueue = LiveStereoSampleQueue(MIX_QUEUE_INITIAL, MIX_QUEUE_MAX)
+    private val vocalQueue = LiveStereoSampleQueue(MIX_QUEUE_INITIAL, MIX_QUEUE_MAX)
 
     private val processL = FloatArray(DSP_BLOCK)
     private val processR = FloatArray(DSP_BLOCK)
@@ -38,7 +38,7 @@ internal class LiveStreamingVocalRemover(
     private val outputR = FloatArray(DSP_BLOCK)
 
     private val aligner =
-        NativeOutputAligner(
+        LiveNativeOutputAligner(
             latencySamples = native.latencySamples(),
             emit = emit,
         )
@@ -214,7 +214,7 @@ internal class LiveStreamingVocalRemover(
     }
 }
 
-private class StereoSampleQueue(
+private class LiveStereoSampleQueue(
     initialCapacity: Int,
     private val maxCapacity: Int,
 ) {
@@ -288,7 +288,7 @@ private class StereoSampleQueue(
     }
 }
 
-private class NativeOutputAligner(
+private class LiveNativeOutputAligner(
     private val latencySamples: Int,
     private val emit: (VocalSeparatorCore.Stereo) -> Unit,
 ) {
@@ -297,7 +297,7 @@ private class NativeOutputAligner(
     }
 
     private val queue =
-        StereoSampleQueue(
+        LiveStereoSampleQueue(
             initialCapacity = 32_768,
             maxCapacity = 65_536,
         )
