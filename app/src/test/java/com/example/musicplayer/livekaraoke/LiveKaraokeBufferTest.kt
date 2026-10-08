@@ -6,17 +6,17 @@ import org.junit.Test
 class LiveKaraokeBufferTest {
 
     @Test
-    fun actualMdx9482StartupBudgetIsThirtySeconds() {
+    fun liveKaraokeStartupBudgetUsesShortFixedMinimum() {
         val frames =
             calculateLiveKaraokeStartupBufferFrames(
                 sourceSampleRate = 44_100,
                 generatedPerWindow = 254_976,
-                startupBufferSeconds = 30,
-                startupBufferWindows = 5,
+                startupBufferSeconds = 6,
+                startupBufferWindows = 1,
                 maxLookaheadFrames = 5_292_000,
             )
 
-        assertEquals(1_323_000, frames)
+        assertEquals(264_600, frames)
     }
 
     @Test
@@ -48,8 +48,8 @@ class LiveKaraokeBufferTest {
         calculateLiveKaraokeSafeBufferFrames(
             sourceSampleRate = 44_100,
             generatedPerWindow = 254_976,
-            startupBufferSeconds = 30,
-            startupBufferWindows = 5,
+            startupBufferSeconds = 6,
+            startupBufferWindows = 1,
             remainingSeconds = 212.0,
             measuredProducerRate = 0.40,
             safetyMarginSeconds = 6.0,
@@ -60,23 +60,23 @@ class LiveKaraokeBufferTest {
     @Test
     fun lookaheadCapacityScalesWithSourceRate() {
         assertEquals(
-            5_292_000,
+            32 * 44_100,
             maxLiveKaraokeLookaheadFrames(44_100),
         )
         assertEquals(
-            5_760_000,
+            32 * 48_000,
             maxLiveKaraokeLookaheadFrames(48_000),
         )
     }
 
     @Test
-    fun realtimeOrFasterThroughputKeepsThirtySecondMinimum() {
+    fun realtimeOrFasterThroughputKeepsShortMinimum() {
         val frames =
             calculateLiveKaraokeSafeBufferFrames(
                 sourceSampleRate = 44_100,
                 generatedPerWindow = 254_976,
-                startupBufferSeconds = 30,
-                startupBufferWindows = 5,
+                startupBufferSeconds = 6,
+                startupBufferWindows = 1,
                 remainingSeconds = 212.0,
                 measuredProducerRate = 1.01,
                 safetyMarginSeconds = 6.0,
@@ -84,23 +84,23 @@ class LiveKaraokeBufferTest {
             )
 
         assertEquals(
-            30 * 44_100,
+            6 * 44_100,
             frames,
         )
     }
 
     @Test
-    fun startupBudgetUsesWindowRequirementWhenItIsLarger() {
+    fun startupBudgetUsesSingleWindowWhenItIsLarger() {
         val frames =
             calculateLiveKaraokeStartupBufferFrames(
                 sourceSampleRate = 44_100,
                 generatedPerWindow = 300_000,
-                startupBufferSeconds = 30,
-                startupBufferWindows = 5,
+                startupBufferSeconds = 6,
+                startupBufferWindows = 1,
                 maxLookaheadFrames = 5_292_000,
             )
 
-        assertEquals(1_500_000, frames)
+        assertEquals(300_000, frames)
     }
 
     @Test

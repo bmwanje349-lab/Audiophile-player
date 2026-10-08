@@ -192,10 +192,10 @@ class LiveKaraokeActivity : AppCompatActivity() {
 
                             LiveKaraokeEngine.State.BUFFERING,
                             LiveKaraokeEngine.State.SEEKING ->
-                                "Buffering the live neural stream…"
+                                "Preparing the live vocal-removal stream…"
 
                             LiveKaraokeEngine.State.PLAYING ->
-                                "Live karaoke playing — MDX-Net is processing ahead"
+                                "Live karaoke is playing"
 
                             LiveKaraokeEngine.State.PAUSED ->
                                 "Live karaoke paused"
@@ -367,8 +367,8 @@ class LiveKaraokeActivity : AppCompatActivity() {
         body.addView(
             TextView(this).apply {
                 text =
-                    "MDX-Net neural vocal removal → " +
-                        "bounded look-ahead → AudioTrack"
+                    "Adaptive vocal removal → bounded live buffer → " +
+                        "low-latency playback"
                 setTextColor(TEXT_SECONDARY)
                 textSize = 13f
                 setPadding(
@@ -386,7 +386,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
                     if (trackUri == null) {
                         "No current local track was supplied."
                     } else {
-                        "Ready — start live karaoke to begin MDX-Net processing."
+                        "Ready — start Live Karaoke. Neural processing is used when the phone can sustain it; otherwise Fast Live mode starts automatically."
                     }
                 setTextColor(MUTED)
                 textSize = 12f
@@ -474,10 +474,10 @@ class LiveKaraokeActivity : AppCompatActivity() {
         body.addView(
             TextView(this).apply {
                 text =
-                    "Live Karaoke starts automatically. The first MDX window " +
-                        "is buffered before the instrumental begins, then inference " +
-                        "continues ahead of the playhead inside a fixed memory budget. " +
-                        "Seeking rebuilds context from slightly before the target."
+                    "Live Karaoke chooses a neural or fast local processing path based on sustained " +
+                        "device performance. Playback starts after a short bounded buffer " +
+                        "and processing continues ahead of the playhead. Seeking rebuilds " +
+                        "the required context without buffering the whole song."
                 setTextColor(TEXT_SECONDARY)
                 textSize = 12f
                 setPadding(
