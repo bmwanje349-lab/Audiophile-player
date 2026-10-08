@@ -1611,6 +1611,55 @@ class LiveKaraokeEngine(
             }
         }
 
+        private fun fail(throwable: Throwable) {
+            if (!cancelled.compareAndSet(false, true)) return
+            producerFinished = true
+            queue?.cancel()
+            executor?.shutdownNow()
+            if (!consumerStarted) {
+                releaseAudioTrack()
+            }
+            if (isCurrent(id)) {
+                listener.onError(throwable)
+            }
+        }
+
+        private fun releaseAudioTrack() {
+            val track =
+                synchronized(this) {
+                    val current = audioTrack ?: return
+                    audioTrack = null
+                    current
+                }
+
+            runCatching { track.pause() }
+            runCatching { track.flush() }
+            runCatching { track.stop() }
+            runCatching { track.release() }
+        }
+
+        private fun playbackPositionMs(): Long {
+            val track = audioTrack
+
+            val played =
+                if (track != null && consumerStarted) {
+                    audioTrackPlaybackHeadFrames(
+                        runCatching {
+                            track.playbackHeadPosition
+                        }.getOrDefault(0),
+                    )
+                } else {
+                    0L
+                }
+
+            return liveKaraokePositionMs(
+                playbackStartMs = playbackStartMs,
+                playbackFrames = played,
+                sampleRate = sourceSampleRate,
+                durationMs = durationMs,
+            )
+        }
+
         private fun waitForAudioTrackDrain() {
             val track =
                 audioTrack ?: return
