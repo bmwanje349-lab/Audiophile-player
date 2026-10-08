@@ -96,6 +96,14 @@ class LiveKaraokeService : Service() {
                         for (listener in listeners) {
                             listener.onError(error)
                         }
+
+                        /*
+                         * A failed engine is no longer producing audio. Do not
+                         * leave an orphaned foreground service/notification
+                         * running after the listener has received the error.
+                         */
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
                     }
 
                     override fun onCompleted() {
