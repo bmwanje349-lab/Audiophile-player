@@ -307,6 +307,10 @@ class AudioRenderRepository(
                                 MediaFormat.KEY_CHANNEL_COUNT
                             ) ?: channels
 
+                        require(channels in 1..2) {
+                            "AI Vocal Remover currently supports mono or stereo sources; decoder reported $channels channels"
+                        }
+
                         encoding =
                             outputFormat.getIntegerSafely(
                                 MediaFormat.KEY_PCM_ENCODING
