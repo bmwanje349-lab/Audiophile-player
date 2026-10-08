@@ -934,11 +934,11 @@ class LiveKaraokeEngine(
                                 outputGainDb = settings.outputGainDb,
                                 ceilingDb = settings.ceilingDb,
                             ),
-                    ) { block ->
+                    { block ->
                         enqueueInstrumental(block)
                     },
-                        profiler = profiler,
-                    )
+                    profiler = profiler,
+                )
 
                 startupTargetFrames =
                     (
