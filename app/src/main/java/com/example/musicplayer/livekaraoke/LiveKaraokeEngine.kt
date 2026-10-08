@@ -67,7 +67,14 @@ class LiveKaraokeEngine(
     private val modelSpec = MdxModelSpec.LIGHT_9482
 
     private companion object {
-        const val MAX_LOOKAHEAD_FRAMES = 529_200
+        // A single MDX window is about 5.8 s of generated audio. Starting
+        // playback with only one window leaves no margin for normal phone-side
+        // inference jitter, decoder work, GC, or thermal throttling. Keep a
+        // multi-window queue and require a real safety buffer before play.
+        const val MAX_LOOKAHEAD_FRAMES = 1_984_500 // ~45 s @ 44.1 kHz
+        const val STARTUP_BUFFER_SECONDS = 18
+        const val STARTUP_BUFFER_WINDOWS = 3
+        const val AUDIO_TRACK_BUFFER_SECONDS = 2
         const val SEEK_CONTEXT_MARGIN_MS = 100L
     }
 
@@ -448,18 +455,28 @@ class LiveKaraokeEngine(
                     if (!consumerStarted) {
                         val buffered =
                             queue.availableFrames()
+                        val required =
+                            initialBufferFrames()
                         val ready =
-                            buffered >= initialBufferFrames() ||
+                            buffered >= required ||
                                 (producerFinished && buffered > 0)
 
                         if (!ready) {
                             if (isCurrent(id)) {
+                                listener.onState(
+                                    State.BUFFERING,
+                                    "Building a safe instrumental buffer — " +
+                                        bufferedSeconds(buffered) +
+                                        " / " +
+                                        bufferedSeconds(required) +
+                                        " s",
+                                )
                                 listener.onProgress(
                                     playbackPositionMs(),
                                     durationMs,
                                 )
                             }
-                            Thread.sleep(20L)
+                            Thread.sleep(30L)
                             continue
                         }
 
@@ -569,21 +586,52 @@ class LiveKaraokeEngine(
                         ?: Long.MAX_VALUE,
                 )
 
-        private fun initialBufferFrames(): Int =
-            min(
+        private fun initialBufferFrames(): Int {
+            val generatedPerWindow =
+                (
+                    MdxStft(modelSpec)
+                        .generatedSamplesPerChunk()
+                        .toDouble() *
+                        sourceSampleRate.toDouble() /
+                        MdxStft.SAMPLE_RATE.toDouble()
+                )
+                    .roundToInt()
+                    .coerceAtLeast(1)
+
+            val timeBased =
+                (
+                    sourceSampleRate.toLong() *
+                        STARTUP_BUFFER_SECONDS.toLong()
+                )
+                    .coerceAtMost(Int.MAX_VALUE.toLong())
+                    .toInt()
+
+            val windowBased =
+                generatedPerWindow.toLong() *
+                    STARTUP_BUFFER_WINDOWS.toLong()
+
+            return min(
                 MAX_LOOKAHEAD_FRAMES,
                 max(
-                    sourceSampleRate * 2,
-                    (
-                        MdxStft(modelSpec)
-                            .chunkSizeSamples()
-                            .toDouble() *
-                            sourceSampleRate.toDouble() /
-                            MdxStft.SAMPLE_RATE.toDouble()
-                    )
-                        .roundToInt(),
+                    1,
+                    max(
+                        timeBased,
+                        windowBased.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                    ),
                 ),
             )
+        }
+
+        private fun bufferedSeconds(frames: Int): String {
+            val seconds =
+                frames.toDouble() /
+                    sourceSampleRate.toDouble()
+            return String.format(
+                java.util.Locale.US,
+                "%.1f",
+                seconds,
+            )
+        }
 
         private fun enqueueInstrumental(
             block: VocalSeparatorCore.Stereo,
@@ -967,10 +1015,19 @@ class LiveKaraokeEngine(
                 "AudioTrack minimum buffer size failed: $minBytes"
             }
 
+            val safetyBytes =
+                (
+                    sampleRate.toLong() *
+                        AUDIO_TRACK_BUFFER_SECONDS.toLong() *
+                        4L
+                )
+                    .coerceAtMost(Int.MAX_VALUE.toLong())
+                    .toInt()
+
             val bufferBytes =
                 max(
-                    minBytes * 4,
-                    8192 * 4 * 4,
+                    minBytes * 8,
+                    safetyBytes,
                 )
 
             return AudioTrack.Builder()
