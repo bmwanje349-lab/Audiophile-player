@@ -20,23 +20,47 @@ class LiveKaraokeBufferTest {
     }
 
     @Test
-    fun lowNeuralThroughputCannotMoveTheStartupTarget() {
+    fun lowerThanRealtimeThroughputProducesTheMathematicallyRequiredTarget() {
         /*
-         * For a 212-second track, even a sustained 0.51x producer rate would
-         * mathematically require much more than 30 seconds to guarantee no
-         * underrun. That is a separate throughput/sustainability problem;
-         * it must not mutate the fixed startup-buffer target.
+         * 212 s remaining at 0.508x real-time needs:
+         * 212 * (1 - 0.508) + 6 = 110.304 s.
          */
         val frames =
-            calculateLiveKaraokeStartupBufferFrames(
+            calculateLiveKaraokeSafeBufferFrames(
                 sourceSampleRate = 44_100,
                 generatedPerWindow = 254_976,
                 startupBufferSeconds = 30,
                 startupBufferWindows = 5,
+                remainingSeconds = 212.0,
+                measuredProducerRate = 0.508,
+                safetyMarginSeconds = 6.0,
                 maxLookaheadFrames = 5_292_000,
             )
 
-        assertEquals(30 * 44_100, frames)
+        assertEquals(
+            4_864_406,
+            frames,
+        )
+    }
+
+    @Test
+    fun realtimeOrFasterThroughputKeepsThirtySecondMinimum() {
+        val frames =
+            calculateLiveKaraokeSafeBufferFrames(
+                sourceSampleRate = 44_100,
+                generatedPerWindow = 254_976,
+                startupBufferSeconds = 30,
+                startupBufferWindows = 5,
+                remainingSeconds = 212.0,
+                measuredProducerRate = 1.01,
+                safetyMarginSeconds = 6.0,
+                maxLookaheadFrames = 5_292_000,
+            )
+
+        assertEquals(
+            30 * 44_100,
+            frames,
+        )
     }
 
     @Test
