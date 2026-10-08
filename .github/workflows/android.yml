@@ -73,6 +73,9 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Verify pinned Gradle wrapper
+        run: ./gradlew --version
+
       - name: Show project layout
         run: |
           pwd
@@ -87,10 +90,10 @@ jobs:
           cat settings.gradle.kts
           echo "--- all build files ---"
           find . -name "build.gradle*" -not -path "./.git/*"
-          echo "--- gradle projects ---"
-          gradle projects --console=plain --no-daemon
+          echo "--- ./gradlew projects ---"
+          ./gradlew projects --console=plain --no-daemon
           echo "--- app tasks ---"
-          gradle :app:tasks --all --console=plain --no-daemon
+          ./gradlew :app:tasks --all --console=plain --no-daemon
 
       - name: Verify critical Android wiring
         run: |
@@ -104,13 +107,13 @@ jobs:
       - name: Run JVM streaming regression tests
         run: |
           set -euo pipefail
-          gradle :app:testDebugUnitTest --console=plain --stacktrace --no-daemon
+          ./gradlew :app:testDebugUnitTest --console=plain --stacktrace --no-daemon
 
       - name: Build Debug APK
         run: |
           set -euo pipefail
           set +e
-          gradle :app:assembleDebug             --console=plain             --stacktrace             --no-daemon             > build.log 2>&1
+          ./gradlew :app:assembleDebug             --console=plain             --stacktrace             --no-daemon             > build.log 2>&1
           status=$?
           cat build.log
           echo "=================== ERROR SUMMARY ==================="
@@ -161,7 +164,7 @@ jobs:
       - name: Build CI-signed Release APK
         run: |
           set -euo pipefail
-          gradle :app:assembleCiRelease --console=plain --stacktrace --no-daemon
+          ./gradlew :app:assembleCiRelease --console=plain --stacktrace --no-daemon
 
       - name: Verify CI Release APK payload and signature
         run: |
@@ -253,7 +256,7 @@ jobs:
           ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          gradle :app:assembleRelease --console=plain --stacktrace --no-daemon
+          ./gradlew :app:assembleRelease --console=plain --stacktrace --no-daemon
 
       - name: Verify production signature
         if: steps.signing.outputs.configured == 'true'
@@ -305,6 +308,9 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Verify pinned Gradle wrapper
+        run: ./gradlew --version
+
       - name: Enable KVM access for the Android emulator
         shell: bash
         run: |
@@ -344,7 +350,7 @@ jobs:
             -camera-front none
           script: |
             set +e
-            gradle :app:connectedDebugAndroidTest               --console=plain               --stacktrace               --no-daemon               --max-workers=2
+            ./gradlew :app:connectedDebugAndroidTest               --console=plain               --stacktrace               --no-daemon               --max-workers=2
             status=$?
 
             echo "===== EMULATOR STATE ====="
