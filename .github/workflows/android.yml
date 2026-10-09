@@ -354,10 +354,10 @@ jobs:
             status=$?
 
             echo "===== EMULATOR STATE ====="
-            adb -s "${EMULATOR_PORT:-5554}" shell getprop ro.build.version.sdk || true
-            adb -s "${EMULATOR_PORT:-5554}" shell getprop sys.boot_completed || true
+            adb -s "emulator-${EMULATOR_PORT:-5554}" shell getprop ro.build.version.sdk || true
+            adb -s "emulator-${EMULATOR_PORT:-5554}" shell getprop sys.boot_completed || true
 
             echo "===== TEST LOGCAT (tail) ====="
-            adb -s "${EMULATOR_PORT:-5554}" logcat -d -t 20000 || true
+            adb -s "emulator-${EMULATOR_PORT:-5554}" logcat -d -t 20000 || true
 
             exit "$status"
