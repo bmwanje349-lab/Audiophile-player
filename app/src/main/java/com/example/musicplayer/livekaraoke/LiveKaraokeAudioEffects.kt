@@ -49,9 +49,9 @@ internal class LiveKaraokeAudioEffects(
     private var finished = false
 
     init {
-        require(sampleRate > 0) { "Live Karaoke sample rate must be positive" }
-
         try {
+            require(sampleRate > 0) { "Live Karaoke sample rate must be positive" }
+
             // Read exactly the same persisted settings used by PlaybackService.
             EqSettingsStore(context.applicationContext)
                 .applyTo(peqEngine, widenerEngine)
@@ -89,10 +89,11 @@ internal class LiveKaraokeAudioEffects(
         }
         if (pcm.isEmpty()) return
 
-        val requiredBytes = pcm.size * Short.SIZE_BYTES
-        check(requiredBytes <= MAX_INPUT_BUFFER_BYTES) {
+        val requiredBytesLong = pcm.size.toLong() * Short.SIZE_BYTES.toLong()
+        check(requiredBytesLong <= MAX_INPUT_BUFFER_BYTES.toLong()) {
             "Live Karaoke PCM block exceeds the bounded effects input buffer"
         }
+        val requiredBytes = requiredBytesLong.toInt()
         if (requiredBytes > inputBuffer.capacity()) {
             var capacity = inputBuffer.capacity()
             while (capacity < requiredBytes) {
