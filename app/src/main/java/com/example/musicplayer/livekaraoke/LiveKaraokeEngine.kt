@@ -2135,7 +2135,7 @@ class LiveKaraokeEngine(
             }
 
             profiler.record(
-                LiveKaraokeStageProfiler.Stage.QUEUE_ENQUEUE,
+                LiveKaraokeStageProfiler.Stage.PEQ_WIDENER,
                 System.nanoTime() - processStartNs,
             )
         }
