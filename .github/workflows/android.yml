@@ -17,7 +17,7 @@ jobs:
       available: ${{ steps.model.outputs.available }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify vendored exact MDX ONNX model
         id: model
@@ -29,8 +29,8 @@ jobs:
 
           if [ ! -f "$MODEL" ]; then
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "MDX model is not vendored yet. The model-vendor workflow will bootstrap it on main."
-            exit 0
+            echo "::error::Required MDX model is missing: $MODEL. The APK build cannot run without the pinned model asset."
+            exit 1
           fi
 
           echo "available=true" >> "$GITHUB_OUTPUT"
@@ -46,7 +46,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v6
@@ -69,9 +69,12 @@ jobs:
           MDX_MODEL="$PWD/app/src/main/assets/models/mdx/UVR_MDXNET_9482.onnx"             python3 mdx_model_smoke.py
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "8.9"
+
+      - name: Verify pinned Gradle wrapper
+        run: ./gradlew --version
 
       - name: Show project layout
         run: |
@@ -87,10 +90,10 @@ jobs:
           cat settings.gradle.kts
           echo "--- all build files ---"
           find . -name "build.gradle*" -not -path "./.git/*"
-          echo "--- gradle projects ---"
-          gradle projects --console=plain --no-daemon
+          echo "--- ./gradlew projects ---"
+          ./gradlew projects --console=plain --no-daemon
           echo "--- app tasks ---"
-          gradle :app:tasks --all --console=plain --no-daemon
+          ./gradlew :app:tasks --all --console=plain --no-daemon
 
       - name: Verify critical Android wiring
         run: |
@@ -104,13 +107,13 @@ jobs:
       - name: Run JVM streaming regression tests
         run: |
           set -euo pipefail
-          gradle :app:testDebugUnitTest --console=plain --stacktrace --no-daemon
+          ./gradlew :app:testDebugUnitTest --console=plain --stacktrace --no-daemon
 
       - name: Build Debug APK
         run: |
           set -euo pipefail
           set +e
-          gradle :app:assembleDebug             --console=plain             --stacktrace             --no-daemon             > build.log 2>&1
+          ./gradlew :app:assembleDebug             --console=plain             --stacktrace             --no-daemon             > build.log 2>&1
           status=$?
           cat build.log
           echo "=================== ERROR SUMMARY ==================="
@@ -119,7 +122,7 @@ jobs:
           exit "$status"
 
       - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
@@ -161,7 +164,7 @@ jobs:
       - name: Build CI-signed Release APK
         run: |
           set -euo pipefail
-          gradle :app:assembleCiRelease --console=plain --stacktrace --no-daemon
+          ./gradlew :app:assembleCiRelease --console=plain --stacktrace --no-daemon
 
       - name: Verify CI Release APK payload and signature
         run: |
@@ -178,7 +181,7 @@ jobs:
           echo "CI release certificate verification passed"
 
       - name: Upload CI Release APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: app-ci-release
           path: app/build/outputs/apk/ciRelease/app-ciRelease.apk
@@ -186,7 +189,7 @@ jobs:
 
       - name: Upload build log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-log
           path: build.log
@@ -199,7 +202,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check production signing secrets
         id: signing
@@ -240,7 +243,7 @@ jobs:
 
       - name: Set up Gradle
         if: steps.signing.outputs.configured == 'true'
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "8.9"
 
@@ -253,7 +256,7 @@ jobs:
           ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          gradle :app:assembleRelease --console=plain --stacktrace --no-daemon
+          ./gradlew :app:assembleRelease --console=plain --stacktrace --no-daemon
 
       - name: Verify production signature
         if: steps.signing.outputs.configured == 'true'
@@ -266,14 +269,14 @@ jobs:
 
       - name: Upload production Release APK
         if: steps.signing.outputs.configured == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: app-production-release
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
   runtime-smoke:
-    timeout-minutes: 12
+    timeout-minutes: 30
     needs:
       - check-model
       - build
@@ -282,7 +285,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         uses: actions/setup-java@v6
@@ -301,9 +304,27 @@ jobs:
           sdkmanager             "platforms;android-36"             "build-tools;35.0.0"             "cmake;3.22.1"             "ndk;27.3.13750724"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "8.9"
+
+      - name: Verify pinned Gradle wrapper
+        run: ./gradlew --version
+
+      - name: Enable KVM access for the Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -e /dev/kvm ]]; then
+            echo "::error::This runner does not expose /dev/kvm. The x86_64 Android emulator requires hardware virtualization."
+            exit 1
+          fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo chmod 0666 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          ls -l /dev/kvm
 
       - name: Run Android runtime smoke tests on API 35
         uses: reactivecircus/android-emulator-runner@v2.38.0
@@ -316,8 +337,8 @@ jobs:
           ram-size: 4096M
           heap-size: 1024M
           force-avd-creation: true
-          emulator-boot-timeout: 1200
-          disable-linux-hw-accel: false
+          emulator-boot-timeout: 600
+          disable-linux-hw-accel: auto
           disable-animations: true
           emulator-options: >-
             -no-window
@@ -327,16 +348,5 @@ jobs:
             -no-boot-anim
             -camera-back none
             -camera-front none
-          script: |
-            set +e
-            gradle :app:connectedDebugAndroidTest               --console=plain               --stacktrace               --no-daemon               --max-workers=2
-            status=$?
-
-            echo "===== EMULATOR STATE ====="
-            adb -s "${EMULATOR_PORT:-5554}" shell getprop ro.build.version.sdk || true
-            adb -s "${EMULATOR_PORT:-5554}" shell getprop sys.boot_completed || true
-
-            echo "===== TEST LOGCAT (tail) ====="
-            adb -s "${EMULATOR_PORT:-5554}" logcat -d -t 20000 || true
-
-            exit "$status"
+          script: >-
+            bash -c 'set +e; ./gradlew :app:connectedDebugAndroidTest --console=plain --stacktrace --no-daemon --max-workers=2; status=$?; echo "===== EMULATOR STATE ====="; adb -s "emulator-${EMULATOR_PORT:-5554}" shell getprop ro.build.version.sdk || true; adb -s "emulator-${EMULATOR_PORT:-5554}" shell getprop sys.boot_completed || true; echo "===== TEST LOGCAT (tail) ====="; adb -s "emulator-${EMULATOR_PORT:-5554}" logcat -d -t 20000 || true; exit "$status"'

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-GRADLE_BIN="${GRADLE_BIN:-gradle}"
+cd "$ROOT"
+GRADLE_BIN="${GRADLE_BIN:-$ROOT/gradlew}"
 
 echo "[1] Stale LiteRT/TFLite reference check"
 if grep -RInE   'com\.google\.ai\.edge\.litert|ai_edge_litert|\.tflite|LiteRT|TensorBuffer|CompiledModel'   app --exclude-dir=build; then

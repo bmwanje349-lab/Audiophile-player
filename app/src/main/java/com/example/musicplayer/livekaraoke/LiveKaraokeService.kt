@@ -5,10 +5,19 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Binder
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 
 /**
  * Separate foreground service for live karaoke.
@@ -43,6 +52,75 @@ class LiveKaraokeService : Service() {
         >()
 
     private lateinit var engine: LiveKaraokeEngine
+
+    private val audioFocusLock = Any()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var audioManager: AudioManager? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var hasAudioFocus = false
+    private var resumeAfterFocusGain = false
+    private var noisyReceiverRegistered = false
+
+    private val audioFocusListener =
+        AudioManager.OnAudioFocusChangeListener { change ->
+            when (change) {
+                AudioManager.AUDIOFOCUS_GAIN -> {
+                    val shouldResume =
+                        synchronized(audioFocusLock) {
+                            val resume = hasAudioFocus && resumeAfterFocusGain
+                            resumeAfterFocusGain = false
+                            resume
+                        }
+                    if (shouldResume) engine.resume()
+                }
+
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                    val current = engine.currentState()
+                    if (
+                        current == LiveKaraokeEngine.State.PLAYING ||
+                        current == LiveKaraokeEngine.State.BUFFERING ||
+                        current == LiveKaraokeEngine.State.SEEKING
+                    ) {
+                        synchronized(audioFocusLock) {
+                            resumeAfterFocusGain = true
+                        }
+                        engine.pause()
+                    }
+                }
+
+                AudioManager.AUDIOFOCUS_LOSS -> {
+                    synchronized(audioFocusLock) {
+                        resumeAfterFocusGain = false
+                    }
+                    engine.stop()
+                    abandonAudioFocus()
+                    leaveForeground()
+                    stopSelf()
+                }
+            }
+        }
+
+    private val becomingNoisyReceiver =
+        object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != AudioManager.ACTION_AUDIO_BECOMING_NOISY) return
+
+                val current = engine.currentState()
+                if (
+                    current == LiveKaraokeEngine.State.PLAYING ||
+                    current == LiveKaraokeEngine.State.BUFFERING ||
+                    current == LiveKaraokeEngine.State.SEEKING
+                ) {
+                    // A route change such as unplugging headphones must not
+                    // resume automatically to the device speaker.
+                    synchronized(audioFocusLock) {
+                        resumeAfterFocusGain = false
+                    }
+                    engine.pause()
+                }
+            }
+        }
 
     /*
      * True only while this service owns its foreground notification. The
@@ -96,6 +174,7 @@ class LiveKaraokeService : Service() {
                     override fun onError(
                         error: Throwable,
                     ) {
+                        abandonAudioFocus()
                         updateNotification(
                             "Live karaoke error: " +
                                 (
@@ -117,6 +196,7 @@ class LiveKaraokeService : Service() {
                     }
 
                     override fun onCompleted() {
+                        abandonAudioFocus()
                         leaveForeground()
                         for (listener in listeners) {
                             listener.onCompleted()
@@ -125,6 +205,14 @@ class LiveKaraokeService : Service() {
                     }
                 },
             )
+
+        ContextCompat.registerReceiver(
+            this,
+            becomingNoisyReceiver,
+            IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        noisyReceiverRegistered = true
     }
 
     override fun onBind(intent: Intent): IBinder = binder
@@ -159,6 +247,18 @@ class LiveKaraokeService : Service() {
                     ),
                 )
                 foregroundActive = true
+            }
+
+            if (!requestAudioFocusForPlayback()) {
+                val error = IllegalStateException(
+                    "Android denied audio focus. Stop other audio playback and try again.",
+                )
+                leaveForeground()
+                for (listener in listeners) {
+                    runCatching { listener.onError(error) }
+                }
+                stopSelf()
+                return START_NOT_STICKY
             }
 
             engine.start(
@@ -229,15 +329,89 @@ class LiveKaraokeService : Service() {
 
     fun pausePlayback() = engine.pause()
 
-    fun resumePlayback() = engine.resume()
+    fun resumePlayback() {
+        if (requestAudioFocusForPlayback()) {
+            synchronized(audioFocusLock) {
+                resumeAfterFocusGain = false
+            }
+            engine.resume()
+        } else {
+            val message = "Another app currently owns audio focus. Resume when it is available."
+            for (listener in listeners) {
+                runCatching {
+                    listener.onState(LiveKaraokeEngine.State.PAUSED, message)
+                }
+            }
+        }
+    }
 
     fun seekTo(positionMs: Long) =
         engine.seekTo(positionMs)
 
     fun stopPlayback() {
         engine.stop()
+        abandonAudioFocus()
         leaveForeground()
         stopSelf()
+    }
+
+    private fun requestAudioFocusForPlayback(): Boolean {
+        val manager =
+            audioManager ?: getSystemService(AudioManager::class.java)
+                ?: return false
+        audioManager = manager
+
+        val existing =
+            synchronized(audioFocusLock) {
+                audioFocusRequest
+            }
+        val request =
+            existing ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build(),
+                )
+                .setAcceptsDelayedFocusGain(false)
+                .setWillPauseWhenDucked(true)
+                .setOnAudioFocusChangeListener(audioFocusListener, mainHandler)
+                .build()
+
+        val result =
+            runCatching {
+                manager.requestAudioFocus(request)
+            }.getOrElse {
+                AudioManager.AUDIOFOCUS_REQUEST_FAILED
+            }
+
+        synchronized(audioFocusLock) {
+            hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            audioFocusRequest =
+                if (hasAudioFocus) request else null
+            if (!hasAudioFocus) resumeAfterFocusGain = false
+        }
+
+        if (result != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            runCatching { manager.abandonAudioFocusRequest(request) }
+            return false
+        }
+        return true
+    }
+
+    private fun abandonAudioFocus() {
+        val (manager, request) =
+            synchronized(audioFocusLock) {
+                val heldRequest = audioFocusRequest
+                audioFocusRequest = null
+                hasAudioFocus = false
+                resumeAfterFocusGain = false
+                audioManager to heldRequest
+            }
+
+        if (manager != null && request != null) {
+            runCatching { manager.abandonAudioFocusRequest(request) }
+        }
     }
 
     private fun leaveForeground() {
@@ -354,6 +528,11 @@ class LiveKaraokeService : Service() {
         synchronized(notificationLock) {
             foregroundActive = false
         }
+        if (noisyReceiverRegistered) {
+            runCatching { unregisterReceiver(becomingNoisyReceiver) }
+            noisyReceiverRegistered = false
+        }
+        abandonAudioFocus()
         engine.close()
         listeners.clear()
         super.onDestroy()

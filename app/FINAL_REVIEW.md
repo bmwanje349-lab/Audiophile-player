@@ -43,15 +43,9 @@ The project was subjected to multiple review/test passes after the Gradle Wrappe
 
 ## Gradle Wrapper verification
 
-The bundled bootstrap was compiled for Java 17 and tested for:
+The repository now stores the Wrapper JAR and properties at the standard `gradle/wrapper/` paths. The Gradle distribution is pinned to Gradle 8.9 with a SHA-256 checksum. GitHub Actions validates the Wrapper JAR and is configured to run `./gradlew --version` before invoking build and test tasks through the wrapper.
 
-- execution from outside the project directory;
-- Gradle distribution SHA-256 verification;
-- distribution extraction;
-- cached subsequent execution;
-- command-line argument forwarding.
-
-The bootstrap downloads the official Gradle 8.9 distribution configured in `gradle-wrapper.properties`. The JAR itself is a project-local bootstrap implementation prepared in an isolated environment, rather than the stock Gradle wrapper JAR.
+An earlier CI attempt exposed that the POSIX `gradlew` file lacked executable permission (exit code 126). The executable bit has been corrected. The next workflow run is the authoritative check that the wrapper launches from a fresh checkout; prior isolated bootstrap tests do not replace that CI result.
 
 ## Remaining external validation
 
