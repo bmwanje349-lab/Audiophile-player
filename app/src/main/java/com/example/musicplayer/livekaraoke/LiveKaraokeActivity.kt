@@ -367,8 +367,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
         body.addView(
             TextView(this).apply {
                 text =
-                    "Adaptive vocal removal → bounded live buffer → " +
-                        "low-latency playback"
+                    "Neural AI separation when sustainable → bounded buffer → instrumental playback"
                 setTextColor(TEXT_SECONDARY)
                 textSize = 13f
                 setPadding(
@@ -386,7 +385,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
                     if (trackUri == null) {
                         "No current local track was supplied."
                     } else {
-                        "Ready — start Live Karaoke. Neural processing is used when the phone can sustain it; otherwise Fast Live mode starts automatically."
+                        "Ready — Live Karaoke tries neural AI separation first. If the phone cannot sustain it, it switches to Fast DSP suppression, which may leave vocals audible."
                     }
                 setTextColor(MUTED)
                 textSize = 12f
@@ -474,10 +473,12 @@ class LiveKaraokeActivity : AppCompatActivity() {
         body.addView(
             TextView(this).apply {
                 text =
-                    "Live Karaoke chooses a neural or fast local processing path based on sustained " +
-                        "device performance. Playback starts after a short bounded buffer " +
-                        "and processing continues ahead of the playhead. Seeking rebuilds " +
-                        "the required context without buffering the whole song."
+                    "Live Karaoke measures MDX-Net throughput across two complete model windows. " +
+                        "Slower phones may need a larger startup buffer (up to 24 seconds) " +
+                        "to keep AI instrumental playback seamless. If AI cannot safely keep up " +
+                        "or the phone is critically hot, it may switch to Fast DSP suppression; " +
+                        "that mode is not AI separation and can leave vocals audible. Use Offline " +
+                        "AI Vocal Remover for a complete rendered AI instrumental."
                 setTextColor(TEXT_SECONDARY)
                 textSize = 12f
                 setPadding(

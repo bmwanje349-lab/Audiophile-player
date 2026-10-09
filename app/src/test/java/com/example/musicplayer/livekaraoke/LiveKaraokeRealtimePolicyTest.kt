@@ -75,10 +75,10 @@ class LiveKaraokeRealtimePolicyTest {
     }
 
     @Test
-    fun startupPolicyRejectsBelowMinimumSustainedRate() {
+    fun startupPolicyRejectsRateBelowNinetyPercent() {
         assertFalse(
             isNeuralLiveStartupViable(
-                measuredProducerRate = 0.949,
+                measuredProducerRate = 0.899,
                 requiredFrames = 100_000L,
                 sourceSampleRate = 48_000,
             )
@@ -86,8 +86,84 @@ class LiveKaraokeRealtimePolicyTest {
     }
 
     @Test
+    fun slowerNearRealtimeDeviceIsAcceptedWhenSafeBufferFitsTheBound() {
+        val sampleRate = 48_000
+        val required =
+            calculateLiveKaraokeRequiredBufferFrames(
+                sourceSampleRate = sampleRate,
+                generatedPerWindow = 254_976,
+                startupBufferSeconds = 6,
+                startupBufferWindows = 1,
+                remainingSeconds = 212.0,
+                measuredProducerRate = 0.92,
+                safetyMarginSeconds = 6.0,
+            )
+
+        assertTrue(
+            isNeuralLiveStartupViable(
+                measuredProducerRate = 0.92,
+                requiredFrames = required,
+                sourceSampleRate = sampleRate,
+            )
+        )
+        assertTrue(required.toDouble() / sampleRate <= 24.0)
+    }
+
+    @Test
+    fun playbackFallsBackOnlyWhenRateHeadroomOrThermalSafetyRequiresIt() {
+        assertFalse(
+            shouldSwitchLiveKaraokeToFastFallback(
+                rollingProducerRate = Double.NaN,
+                bufferedSeconds = 4.0,
+                thermalCritical = false,
+                thermalSevere = false,
+            )
+        )
+        assertFalse(
+            shouldSwitchLiveKaraokeToFastFallback(
+                rollingProducerRate = 0.80,
+                bufferedSeconds = 7.0,
+                thermalCritical = false,
+                thermalSevere = false,
+            )
+        )
+        assertTrue(
+            shouldSwitchLiveKaraokeToFastFallback(
+                rollingProducerRate = 0.80,
+                bufferedSeconds = 5.0,
+                thermalCritical = false,
+                thermalSevere = false,
+            )
+        )
+        assertTrue(
+            shouldSwitchLiveKaraokeToFastFallback(
+                rollingProducerRate = Double.NaN,
+                bufferedSeconds = 15.0,
+                thermalCritical = true,
+                thermalSevere = false,
+            )
+        )
+        assertFalse(
+            shouldSwitchLiveKaraokeToFastFallback(
+                rollingProducerRate = Double.NaN,
+                bufferedSeconds = 15.0,
+                thermalCritical = false,
+                thermalSevere = true,
+            )
+        )
+        assertTrue(
+            shouldSwitchLiveKaraokeToFastFallback(
+                rollingProducerRate = Double.NaN,
+                bufferedSeconds = 8.0,
+                thermalCritical = false,
+                thermalSevere = true,
+            )
+        )
+    }
+
+    @Test
     fun startupPolicyRejectsLongStartupEvenWhenRateIsOtherwiseHealthy() {
-        val requiredFrames = 18L * 48_000L + 1L
+        val requiredFrames = 24L * 48_000L + 1L
 
         assertFalse(
             isNeuralLiveStartupViable(

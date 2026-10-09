@@ -201,6 +201,60 @@ class LiveKaraokeAndroidInstrumentationTest {
         }
     }
 
+
+    @Test
+    fun neuralStemModeSubtractsAnAlignedKnownVocalStem() {
+        val sampleRate = 44_100
+        val count = sampleRate * 2
+        val instrumental =
+            VocalSeparatorCore.Stereo(
+                left = FloatArray(count) { i ->
+                    (0.07 * kotlin.math.sin(2.0 * PI * 220.0 * i / sampleRate)).toFloat()
+                },
+                right = FloatArray(count) { i ->
+                    (0.06 * kotlin.math.sin(2.0 * PI * 330.0 * i / sampleRate)).toFloat()
+                },
+            )
+        val vocals =
+            VocalSeparatorCore.Stereo(
+                left = FloatArray(count) { i ->
+                    (0.03 * kotlin.math.sin(2.0 * PI * 880.0 * i / sampleRate)).toFloat()
+                },
+                right = FloatArray(count) { i ->
+                    (0.025 * kotlin.math.sin(2.0 * PI * 880.0 * i / sampleRate + 0.2)).toFloat()
+                },
+            )
+        val mix =
+            VocalSeparatorCore.Stereo(
+                left = FloatArray(count) { i -> instrumental.left[i] + vocals.left[i] },
+                right = FloatArray(count) { i -> instrumental.right[i] + vocals.right[i] },
+            )
+
+        val processed =
+            NativeVocalRemover(sampleRate).use { native ->
+                native.setDepth(1f)
+                native.setDryWet(1f)
+                native.setStemGainDb(0f)
+                native.setOutputGainDb(0f)
+                native.setCeilingDb(0f)
+                native.renderOffline(mix, vocals, blockSize = 2_048)
+            }
+
+        var residualEnergy = 0.0
+        var vocalEnergy = 0.0
+        for (i in 0 until count) {
+            val residualL = processed.left[i] - instrumental.left[i]
+            val residualR = processed.right[i] - instrumental.right[i]
+            residualEnergy += residualL * residualL + residualR * residualR
+            vocalEnergy += vocals.left[i] * vocals.left[i] + vocals.right[i] * vocals.right[i]
+        }
+
+        assertTrue(
+            "Neural stem mode did not sufficiently suppress the supplied vocal estimate",
+            residualEnergy < vocalEnergy * 0.10,
+        )
+    }
+
     @Test
     fun pendingNeuralAudioTransfersExactlyOnceIntoFastLiveTimeline() {
         val sampleRate = 44_100
