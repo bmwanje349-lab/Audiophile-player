@@ -147,6 +147,8 @@ jobs:
               assert hashlib.sha256(data).hexdigest()==model_sha, "bundled MDX model SHA-256 mismatch"
               for abi in ("arm64-v8a","armeabi-v7a","x86_64"):
                   assert f"lib/{abi}/libaudiophile_vocal_remover.so" in names, f"vocal JNI missing for {abi}"
+                  assert f"lib/{abi}/libpeq.so" in names, f"PEQ JNI missing for {abi}"
+                  assert f"lib/{abi}/libwidener.so" in names, f"Widener JNI missing for {abi}"
                   assert f"lib/{abi}/libonnxruntime.so" in names or any(
                       n.startswith(f"lib/{abi}/") and "onnxruntime" in n for n in names
                   ), f"ONNX Runtime native library missing for {abi}"

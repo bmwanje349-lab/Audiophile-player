@@ -665,7 +665,7 @@ class MainActivity : AppCompatActivity() {
         )))
 
         root.addView(settingsGroup("About", listOf(
-            settingRow("Audiophile Player", "Version 0.4.0 • custom C++ DSP engine", android.R.drawable.ic_menu_info_details) { showInfoDialog("About", "Audiophile Player 0.4.0\n\nCustom audio chain:\nGraphic EQ → Parametric EQ → v10 Stereo Widener.\n\nThe visual theme is Midnight Audiophile.") }
+            settingRow("Audiophile Player", "Version ${appVersionName()} • custom C++ DSP engine", android.R.drawable.ic_menu_info_details) { showInfoDialog("About", "Audiophile Player ${appVersionName()}\n\nCustom audio chain:\nGraphic EQ → Parametric EQ → v10 Stereo Widener.\n\nThe visual theme is Midnight Audiophile.") }
         )))
 
         scroll.addView(root)
@@ -1107,6 +1107,13 @@ class MainActivity : AppCompatActivity() {
         ),
         intArrayOf(ACCENT, TEXT_SECONDARY)
     )
+
+    /** The installed versionName, so the About screen can never drift from build.gradle.kts. */
+    private fun appVersionName(): String =
+        runCatching { packageManager.getPackageInfo(packageName, 0).versionName }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: "unknown"
 
     private fun formatTime(ms: Long): String {
         val total = (ms.coerceAtLeast(0L) / 1000L).toInt()

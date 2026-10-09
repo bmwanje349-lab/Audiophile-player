@@ -93,7 +93,11 @@ internal object LiveKaraokePerformancePolicy {
         }
 
     const val MIX_QUEUE_MAX_SAMPLES = 393_216
-    const val AUDIO_TRACK_BUFFER_SECONDS = 2
+
+    // Single source of truth for the engine. This used to say 2 while the
+    // engine silently used its own private copy of 4; 4 is the value that
+    // has actually been shipping, so behaviour is unchanged.
+    const val AUDIO_TRACK_BUFFER_SECONDS = 4
     const val STARTUP_BUFFER_SECONDS = 6
     const val STARTUP_BUFFER_WINDOWS = 1
     // Permit slightly sub-real-time devices only when a bounded safety buffer
@@ -227,6 +231,43 @@ internal fun calculateLiveKaraokeRequiredBufferFrames(
 internal class NeuralLiveNotViableException(
     message: String,
 ) : IllegalStateException(message)
+
+/**
+ * Tracks recent AudioTrack underruns and reports when there are enough of
+ * them inside a short window to justify abandoning neural separation.
+ *
+ * A single glitch (GC pause, scheduler hiccup) is tolerated. The fallback is
+ * one-way for the rest of the track, so it should not be triggered by noise.
+ * Used from the consumer thread only.
+ */
+internal class LiveKaraokeUnderrunWindow(
+    private val windowNs: Long,
+    private val limit: Int,
+) {
+    private val events = ArrayDeque<Long>()
+
+    init {
+        require(windowNs > 0L)
+        require(limit > 0)
+    }
+
+    /**
+     * Records [count] underruns observed at [nowNs]. Returns true once at
+     * least [limit] underruns fall inside the window.
+     */
+    fun record(nowNs: Long, count: Int): Boolean {
+        require(count > 0)
+
+        // A burst larger than the limit cannot change the answer, so cap it
+        // rather than looping for an arbitrarily large driver-reported delta.
+        repeat(minOf(count, limit)) { events.addLast(nowNs) }
+
+        while (events.isNotEmpty() && nowNs - events.first() > windowNs) {
+            events.removeFirst()
+        }
+        return events.size >= limit
+    }
+}
 
 internal fun shouldSwitchLiveKaraokeToFastFallback(
     rollingProducerRate: Double,
@@ -390,11 +431,11 @@ class LiveKaraokeEngine(
     private val modelSpec = MdxModelSpec.LIGHT_9482
 
     private companion object {
-        const val STARTUP_BUFFER_SECONDS = 6
-        const val STARTUP_BUFFER_WINDOWS = 1
+        const val STARTUP_BUFFER_SECONDS = LiveKaraokePerformancePolicy.STARTUP_BUFFER_SECONDS
+        const val STARTUP_BUFFER_WINDOWS = LiveKaraokePerformancePolicy.STARTUP_BUFFER_WINDOWS
         const val RATE_CALIBRATION_WINDOWS = 2
         const val LIVE_SAFETY_MARGIN_SECONDS = 6.0
-        const val AUDIO_TRACK_BUFFER_SECONDS = 4
+        const val AUDIO_TRACK_BUFFER_SECONDS = LiveKaraokePerformancePolicy.AUDIO_TRACK_BUFFER_SECONDS
         const val AUDIO_TRACK_START_PRIME_SECONDS = 0.5
         const val NEURAL_CALIBRATION_TIMEOUT_MS = 25_000L
         const val MIN_NEURAL_SUSTAINED_RATE = LiveKaraokePerformancePolicy.MIN_NEURAL_SUSTAINED_RATE
@@ -406,8 +447,12 @@ class LiveKaraokeEngine(
         const val UI_UPDATE_INTERVAL_MS = 250L
         const val SEEK_CONTEXT_MARGIN_MS = 100L
         const val THERMAL_POLL_INTERVAL_MS = 1_000L
-        const val SUSTAINED_RATE_FALLBACK = 0.90
-        const val MIN_BUFFER_BEFORE_RATE_FALLBACK_SECONDS = 5.0
+ 
+        // One underrun is usually a GC pause or scheduler hiccup and must not
+        // permanently abandon neural separation; repeated ones inside this
+        // window do indicate that processing cannot keep up.
+        const val UNDERRUN_FALLBACK_WINDOW_SECONDS = 30L
+        const val UNDERRUN_FALLBACK_COUNT = 3
         const val PROFILE_TAG = "LiveKaraoke"
     }
 
@@ -638,15 +683,23 @@ class LiveKaraokeEngine(
 
         private var executor: ExecutorService? = null
         private var inferenceFuture: Future<*>? = null
+        @Volatile
         private var audioTrack: AudioTrack? = null
+        @Volatile
         private var fastDsp: LiveDspFallbackProcessor? = null
         @Volatile
         private var usingFastFallback = false
         private val fallbackRequested = AtomicBoolean(false)
+        @Volatile
         private var consumerStarted = false
         private var droppedPrerollFrames = 0
         private var lastUnderrunCount = -1
         private var lastUnderrunPollNs = 0L
+        private val underrunWindow =
+            LiveKaraokeUnderrunWindow(
+                windowNs = UNDERRUN_FALLBACK_WINDOW_SECONDS * 1_000_000_000L,
+                limit = UNDERRUN_FALLBACK_COUNT,
+            )
         private var pendingAudioBlock: ShortArray? = null
         private var pendingAudioOffset = 0
 
@@ -1502,9 +1555,9 @@ class LiveKaraokeEngine(
                 if (!cancelled.get() && isCurrent(id)) {
                     waitForAudioTrackDrain()
 
-                    runCatching { audioTrack?.stop() }
-                    runCatching { audioTrack?.release() }
-                    audioTrack = null
+                    // Same synchronized path stop()/fail() use, so the track
+                    // cannot be released from two threads at once.
+                    releaseAudioTrack()
 
                     state = State.STOPPED
                     listener.onState(
@@ -1642,13 +1695,22 @@ class LiveKaraokeEngine(
                 track.setBufferSizeInFrames(track.bufferCapacityInFrames)
             }
 
+            // Always record, so the window stays accurate, but only give up
+            // on neural separation when underruns keep recurring.
+            val repeated = underrunWindow.record(nowNs, delta)
+
             if (
+                repeated &&
                 !forceDspFallback &&
                 !usingFastFallback &&
                 !fallbackRequested.get()
             ) {
                 requestFastFallback(
-                    "AudioTrack underrun detected; switching processing to Fast Live while preserving the current output stream.",
+                    "Repeated AudioTrack underruns (" +
+                        UNDERRUN_FALLBACK_COUNT +
+                        " within " +
+                        UNDERRUN_FALLBACK_WINDOW_SECONDS +
+                        " s); switching processing to Fast Live while preserving the current output stream.",
                 )
             }
         }
@@ -2198,7 +2260,12 @@ class LiveKaraokeEngine(
             channels: Int,
             onPcmBlock: (VocalSeparatorCore.Stereo) -> Unit,
         ) {
-            require(channels > 0)
+            // decodeLoop() rejects anything above stereo before PCM reaches
+            // here. Keep that contract explicit so a future change cannot
+            // silently drop channels 3+ (the bug fixed for the offline path).
+            require(channels in 1..2) {
+                "Live Karaoke supports mono or stereo only, got $channels channels"
+            }
 
             val bytesPerSample =
                 when (encoding) {
@@ -2261,15 +2328,6 @@ class LiveKaraokeEngine(
                                 encoding,
                             )
 
-                        for (
-                            channel in
-                            2 until channels
-                        ) {
-                            readSample(
-                                buffer,
-                                encoding,
-                            )
-                        }
                     }
                 }
 
