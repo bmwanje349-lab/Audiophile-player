@@ -98,6 +98,14 @@ class LiveKaraokePolicyTest {
     }
 
     @Test
+    fun earlyStartRequiresClearHeadroomFromTheFirstCompleteWindow() {
+        assertTrue(canStartLiveKaraokeAfterFirstWindow(1.20))
+        assertTrue(canStartLiveKaraokeAfterFirstWindow(1.35))
+        assertFalse(canStartLiveKaraokeAfterFirstWindow(1.19))
+        assertFalse(canStartLiveKaraokeAfterFirstWindow(Double.NaN))
+    }
+
+    @Test
     fun fallbackRequiresCriticalThermalStateOrLowRateAndLowBuffer() {
         assertFalse(shouldSwitchLiveKaraokeToFastFallback(0.7, 8.0, false, false))
         assertTrue(shouldSwitchLiveKaraokeToFastFallback(0.7, 5.0, false, false))
