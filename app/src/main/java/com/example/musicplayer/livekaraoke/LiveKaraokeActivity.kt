@@ -473,12 +473,13 @@ class LiveKaraokeActivity : AppCompatActivity() {
         body.addView(
             TextView(this).apply {
                 text =
-                    "Live Karaoke measures MDX-Net throughput across two complete model windows. " +
-                        "Slower phones may need a larger startup buffer (up to 24 seconds) " +
-                        "to keep AI instrumental playback seamless. If AI cannot safely keep up " +
-                        "or the phone is critically hot, it may switch to Fast DSP suppression; " +
-                        "that mode is not AI separation and can leave vocals audible. Use Offline " +
-                        "AI Vocal Remover for a complete rendered AI instrumental."
+                    "Live Karaoke checks the first complete MDX-Net window. Phones with clear " +
+                        "processing headroom can start sooner; borderline phones wait for a " +
+                        "two-window throughput check and may build a larger bounded buffer " +
+                        "(up to 24 seconds). If AI cannot safely keep up or the phone is critically " +
+                        "hot, it may switch to Fast DSP suppression; that mode is not AI separation " +
+                        "and can leave vocals audible. Use Offline AI Vocal Remover for a complete " +
+                        "rendered AI instrumental."
                 setTextColor(TEXT_SECONDARY)
                 textSize = 12f
                 setPadding(
