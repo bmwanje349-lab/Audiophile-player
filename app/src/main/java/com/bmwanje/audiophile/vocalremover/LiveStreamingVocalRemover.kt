@@ -1,6 +1,7 @@
 package com.bmwanje.audiophile.vocalremover
 
 import kotlin.math.min
+import com.example.musicplayer.livekaraoke.LiveKaraokePerformancePolicy
 import com.example.musicplayer.livekaraoke.LiveKaraokeStageProfiler
 
 /**
@@ -26,7 +27,7 @@ internal class LiveStreamingVocalRemover(
         // About 8.9 s at 44.1 kHz. This covers normal MDX/resampler
         // alignment without permitting a minute-scale float queue.
         private const val MIX_QUEUE_INITIAL = 16_384
-        private const val MIX_QUEUE_MAX = 393_216
+        private const val MIX_QUEUE_MAX = LiveKaraokePerformancePolicy.MIX_QUEUE_MAX_SAMPLES
     }
 
     private val mixQueue = LiveStereoSampleQueue(MIX_QUEUE_INITIAL, MIX_QUEUE_MAX)
