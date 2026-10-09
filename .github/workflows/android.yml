@@ -29,8 +29,8 @@ jobs:
 
           if [ ! -f "$MODEL" ]; then
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "MDX model is not vendored yet. The model-vendor workflow will bootstrap it on main."
-            exit 0
+            echo "::error::Required MDX model is missing: $MODEL. The APK build cannot run without the pinned model asset."
+            exit 1
           fi
 
           echo "available=true" >> "$GITHUB_OUTPUT"
