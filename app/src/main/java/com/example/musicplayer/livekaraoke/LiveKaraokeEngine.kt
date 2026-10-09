@@ -96,8 +96,10 @@ internal object LiveKaraokePerformancePolicy {
     const val AUDIO_TRACK_BUFFER_SECONDS = 2
     const val STARTUP_BUFFER_SECONDS = 6
     const val STARTUP_BUFFER_WINDOWS = 1
-    const val MIN_NEURAL_SUSTAINED_RATE = 0.95
-    const val MAX_NEURAL_STARTUP_SECONDS = 18.0
+    // Permit slightly sub-real-time devices only when a bounded safety buffer
+    // can cover the measured deficit for the remaining track.
+    const val MIN_NEURAL_SUSTAINED_RATE = 0.90
+    const val MAX_NEURAL_STARTUP_SECONDS = 24.0
 }
 
 internal fun maxLiveKaraokeLookaheadFrames(
@@ -226,6 +228,23 @@ internal class NeuralLiveNotViableException(
     message: String,
 ) : IllegalStateException(message)
 
+internal fun shouldSwitchLiveKaraokeToFastFallback(
+    rollingProducerRate: Double,
+    bufferedSeconds: Double,
+    thermalCritical: Boolean,
+    thermalSevere: Boolean,
+): Boolean {
+    require(bufferedSeconds.isFinite() && bufferedSeconds >= 0.0)
+
+    return thermalCritical ||
+        (thermalSevere && bufferedSeconds <= 8.0) ||
+        (
+            rollingProducerRate.isFinite() &&
+                rollingProducerRate < LiveKaraokePerformancePolicy.MIN_NEURAL_SUSTAINED_RATE &&
+                bufferedSeconds <= 5.0
+        )
+}
+
 internal fun recommendedLiveKaraokeCpuThreads(
     availableProcessors: Int,
 ): Int {
@@ -243,8 +262,8 @@ internal fun isNeuralLiveStartupViable(
     measuredProducerRate: Double,
     requiredFrames: Long,
     sourceSampleRate: Int,
-    minimumProducerRate: Double = 0.95,
-    maximumStartupSeconds: Double = 18.0,
+    minimumProducerRate: Double = LiveKaraokePerformancePolicy.MIN_NEURAL_SUSTAINED_RATE,
+    maximumStartupSeconds: Double = LiveKaraokePerformancePolicy.MAX_NEURAL_STARTUP_SECONDS,
 ): Boolean {
     require(measuredProducerRate.isFinite() && measuredProducerRate > 0.0)
     require(requiredFrames >= 0L)
@@ -373,13 +392,15 @@ class LiveKaraokeEngine(
     private companion object {
         const val STARTUP_BUFFER_SECONDS = 6
         const val STARTUP_BUFFER_WINDOWS = 1
-        const val RATE_ESTIMATION_MIN_SECONDS = 5.5
+        const val RATE_CALIBRATION_WINDOWS = 2
         const val LIVE_SAFETY_MARGIN_SECONDS = 6.0
         const val AUDIO_TRACK_BUFFER_SECONDS = 4
         const val AUDIO_TRACK_START_PRIME_SECONDS = 0.5
-        const val NEURAL_CALIBRATION_TIMEOUT_MS = 12_000L
-        const val MIN_NEURAL_SUSTAINED_RATE = 0.95
-        const val MAX_NEURAL_STARTUP_SECONDS = 18.0
+        const val NEURAL_CALIBRATION_TIMEOUT_MS = 25_000L
+        const val MIN_NEURAL_SUSTAINED_RATE = LiveKaraokePerformancePolicy.MIN_NEURAL_SUSTAINED_RATE
+        const val MAX_NEURAL_STARTUP_SECONDS = LiveKaraokePerformancePolicy.MAX_NEURAL_STARTUP_SECONDS
+        const val SEVERE_THERMAL_GRACE_MS = 5_000L
+        const val SEVERE_THERMAL_MIN_BUFFER_SECONDS = 8.0
         const val DSP_STARTUP_BUFFER_SECONDS = 1
         const val MAX_AUDIO_DRAIN_WAIT_MS = 15_000L
         const val UI_UPDATE_INTERVAL_MS = 250L
@@ -597,14 +618,15 @@ class LiveKaraokeEngine(
 
         @Volatile
         private var estimatedProducerRate = Double.NaN
+        @Volatile
         private var rollingProducerRate = Double.NaN
         private var thermalStatus: Int? = null
+        private var severeThermalSinceNs = 0L
         private var lastHealthPollNs = 0L
-        private var lastRateSampleNs = 0L
-        private var lastRateSampleFrames = 0L
 
+        @Volatile
         private var producerRateStartNs = 0L
-        private var producerRateFrames = 0L
+        private var throughputTracker: LiveKaraokeThroughputTracker? = null
         private var startupTargetFrames = 0
         private var startupTargetFinalized = false
         private val profiler = LiveKaraokeStageProfiler()
@@ -693,7 +715,7 @@ class LiveKaraokeEngine(
                 listener.onState(
                     state,
                     if (consumerStarted) {
-                        "Live karaoke playing — processing ahead"
+                        "AI vocal separation active — MDX-Net instrumental output."
                     } else {
                         "Buffering the first MDX window…"
                     },
@@ -748,6 +770,25 @@ class LiveKaraokeEngine(
                     inputFormat.getIntegerSafely(
                         MediaFormat.KEY_SAMPLE_RATE
                     ) ?: error("Source sample rate is unavailable")
+
+                val generatedFramesPerWindow =
+                    (
+                        MdxStft(modelSpec)
+                            .generatedSamplesPerChunk()
+                            .toDouble() *
+                            sourceSampleRate.toDouble() /
+                            MdxStft.SAMPLE_RATE.toDouble()
+                    )
+                        .roundToLong()
+                        .coerceAtLeast(1L)
+                throughputTracker =
+                    LiveKaraokeThroughputTracker(
+                        sampleRate = sourceSampleRate,
+                        calibrationFrames =
+                            generatedFramesPerWindow *
+                                RATE_CALIBRATION_WINDOWS.toLong(),
+                        rollingWindowFrames = generatedFramesPerWindow,
+                    )
 
                 queue =
                     LivePcmQueue(
@@ -1001,6 +1042,7 @@ class LiveKaraokeEngine(
 
                 if (!startedClock) {
                     producerRateStartNs = System.nanoTime()
+                    throughputTracker?.start(producerRateStartNs)
                     startedClock = true
                 }
 
@@ -1082,9 +1124,9 @@ class LiveKaraokeEngine(
                 listener.onState(
                     state,
                     if (consumerStarted) {
-                        "Fast Live engaged — continuing without restarting playback."
+                        "Fast DSP suppression active — AI could not sustain live playback; vocals may remain. Use Offline AI Vocal Remover for a rendered AI instrumental."
                     } else {
-                        "Fast Live engaged — building a short startup buffer."
+                        "Fast DSP suppression active — AI could not sustain live playback; vocals may remain. Use Offline AI Vocal Remover for a rendered AI instrumental."
                     },
                 )
             }
@@ -1111,9 +1153,9 @@ class LiveKaraokeEngine(
                             State.BUFFERING
                         },
                         if (consumerStarted) {
-                            "Switching to Fast Live — keeping the current playback stream."
+                            "AI separation could not sustain playback; switching to classic DSP suppression. Vocals may remain."
                         } else {
-                            "Neural Live is too slow on this device — switching to Fast Live."
+                            "AI separation is too slow for this device; switching to classic DSP suppression. Vocals may remain."
                         },
                     )
                 }
@@ -1222,7 +1264,7 @@ class LiveKaraokeEngine(
                 if (isCurrent(id)) {
                     listener.onState(
                         State.BUFFERING,
-                        "Fast Live mode — avoiding a long neural prebuffer on this device.",
+                        "Fast DSP suppression mode — neural AI is not active; vocals may remain.",
                     )
                 }
 
@@ -1384,9 +1426,9 @@ class LiveKaraokeEngine(
                             listener.onState(
                                 State.PLAYING,
                                 if (forceDspFallback || usingFastFallback) {
-                                    "Live karaoke playing — fast local vocal suppression"
+                                    "Fast DSP suppression active — not AI separation; vocals may remain."
                                 } else {
-                                    "Live karaoke playing — MDX-Net is processing ahead"
+                                    "AI vocal separation active — MDX-Net instrumental output."
                                 },
                             )
                         }
@@ -1811,65 +1853,13 @@ class LiveKaraokeEngine(
         private fun noteProducerThroughput(
             emittedFrames: Int,
         ) {
-            val now = System.nanoTime()
-
-            if (producerRateStartNs == 0L) {
-                producerRateStartNs = now
-                lastRateSampleNs = now
-                lastRateSampleFrames = 0L
-            }
-
-            producerRateFrames += emittedFrames.toLong()
-
-            val minimumFrames =
-                (
-                    sourceSampleRate.toDouble() *
-                        RATE_ESTIMATION_MIN_SECONDS
-                )
-                    .roundToInt()
-                    .toLong()
-                    .coerceAtLeast(1L)
-
-            if (
-                !estimatedProducerRate.isFinite() &&
-                producerRateFrames >= minimumFrames
-            ) {
-                val elapsedSeconds =
-                    (now - producerRateStartNs)
-                        .coerceAtLeast(1L)
-                        .toDouble() /
-                        1_000_000_000.0
-
-                estimatedProducerRate =
-                    if (elapsedSeconds > 0.0) {
-                        (
-                            producerRateFrames.toDouble() /
-                                sourceSampleRate.toDouble()
-                        ) / elapsedSeconds
-                    } else {
-                        Double.NaN
-                    }
-            }
-
-            if (
-                lastRateSampleNs > 0L &&
-                now - lastRateSampleNs >= 1_000_000_000L
-            ) {
-                val deltaFrames =
-                    producerRateFrames - lastRateSampleFrames
-                val deltaSeconds =
-                    (now - lastRateSampleNs).toDouble() /
-                        1_000_000_000.0
-                if (deltaSeconds > 0.0) {
-                    rollingProducerRate =
-                        (
-                            deltaFrames.toDouble() /
-                                sourceSampleRate.toDouble()
-                        ) / deltaSeconds
-                }
-                lastRateSampleFrames = producerRateFrames
-                lastRateSampleNs = now
-            }
+            val tracker = throughputTracker ?: return
+            tracker.addOutputFrames(
+                frames = emittedFrames,
+                nowNs = System.nanoTime(),
+            )
+            estimatedProducerRate = tracker.calibratedRate
+            rollingProducerRate = tracker.rollingRate
         }
 
         private fun pollRuntimeHealth(nowNs: Long) {
@@ -1893,6 +1883,13 @@ class LiveKaraokeEngine(
                 } else {
                     null
                 }
+
+            severeThermalSinceNs =
+                if (thermalStatus == PowerManager.THERMAL_STATUS_SEVERE) {
+                    if (severeThermalSinceNs == 0L) nowNs else severeThermalSinceNs
+                } else {
+                    0L
+                }
         }
 
         private fun dspStartupBufferFrames(): Int =
@@ -1912,17 +1909,26 @@ class LiveKaraokeEngine(
 
             val thermalCritical =
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                    (
-                        thermalStatus == PowerManager.THERMAL_STATUS_SEVERE ||
-                            thermalStatus == PowerManager.THERMAL_STATUS_CRITICAL
-                    )
+                    thermalStatus == PowerManager.THERMAL_STATUS_CRITICAL
+            val severeThermalSeconds =
+                if (severeThermalSinceNs > 0L) {
+                    (nowNs - severeThermalSinceNs).coerceAtLeast(0L) /
+                        1_000_000_000.0
+                } else {
+                    0.0
+                }
+            val severeThermalWithLowHeadroom =
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                    thermalStatus == PowerManager.THERMAL_STATUS_SEVERE &&
+                    severeThermalSeconds >= SEVERE_THERMAL_GRACE_MS / 1_000.0 &&
+                    bufferSeconds <= SEVERE_THERMAL_MIN_BUFFER_SECONDS
 
-            return thermalCritical ||
-                (
-                    rollingProducerRate.isFinite() &&
-                        rollingProducerRate < SUSTAINED_RATE_FALLBACK &&
-                        bufferSeconds <= MIN_BUFFER_BEFORE_RATE_FALLBACK_SECONDS
-                )
+            return shouldSwitchLiveKaraokeToFastFallback(
+                rollingProducerRate = rollingProducerRate,
+                bufferedSeconds = bufferSeconds,
+                thermalCritical = thermalCritical,
+                thermalSevere = severeThermalWithLowHeadroom,
+            )
         }
 
         private fun fallbackHealthReason(): String {
