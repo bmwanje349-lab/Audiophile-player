@@ -696,6 +696,8 @@ class LiveKaraokeEngine(
         private var audioTrack: AudioTrack? = null
         @Volatile
         private var fastDsp: LiveDspFallbackProcessor? = null
+        // Owned by this session and driven only from its output-producer thread.
+        private var outputEffects: LiveKaraokeAudioEffects? = null
         @Volatile
         private var usingFastFallback = false
         private val fallbackRequested = AtomicBoolean(false)
@@ -832,6 +834,10 @@ class LiveKaraokeEngine(
                     inputFormat.getIntegerSafely(
                         MediaFormat.KEY_SAMPLE_RATE
                     ) ?: error("Source sample rate is unavailable")
+
+                // Live Karaoke has a separate AudioTrack, so explicitly create
+                // its own copy of the saved PEQ -> v10 widener chain.
+                outputEffects = LiveKaraokeAudioEffects(appContext, sourceSampleRate)
 
                 val generatedFramesPerWindow =
                     (
@@ -988,6 +994,8 @@ class LiveKaraokeEngine(
                              * call has actually returned.
                              */
                             runCatching { activeStreaming.close() }
+                            runCatching { outputEffects?.close() }
+                            outputEffects = null
                         }
                     }
 
@@ -1056,6 +1064,8 @@ class LiveKaraokeEngine(
                  */
                 if (inferenceFuture == null) {
                     runCatching { streaming?.close() }
+                    runCatching { outputEffects?.close() }
+                    outputEffects = null
                 }
                 runCatching { fastDsp?.close() }
                 Log.i(
@@ -1130,10 +1140,16 @@ class LiveKaraokeEngine(
                     activateFastFallback(separator)
                 }
                 fastDsp?.finish()
+                if (!cancelled.get()) finishOutputEffects()
                 return
             }
 
             separator.finish()
+            if (!cancelled.get()) finishOutputEffects()
+        }
+
+        private fun finishOutputEffects() {
+            outputEffects?.finish { pcm -> enqueueProcessedPcm(pcm) }
         }
 
         private fun activateFastFallback(
@@ -1249,6 +1265,8 @@ class LiveKaraokeEngine(
                         MediaFormat.KEY_SAMPLE_RATE
                     ) ?: error("Source sample rate is unavailable")
 
+                outputEffects = LiveKaraokeAudioEffects(appContext, sourceSampleRate)
+
                 queue =
                     LivePcmQueue(
                         maxFrames =
@@ -1359,6 +1377,7 @@ class LiveKaraokeEngine(
 
                 if (!cancelled.get()) {
                     fastDsp?.finish()
+                    finishOutputEffects()
                     producerFinished = true
                     queue?.finish()
                 }
@@ -1370,6 +1389,8 @@ class LiveKaraokeEngine(
                 runCatching { extractor?.release() }
                 runCatching { fastDsp?.close() }
                 fastDsp = null
+                runCatching { outputEffects?.close() }
+                outputEffects = null
                 if (!consumerStarted && cancelled.get()) {
                     releaseAudioTrack()
                 }
@@ -2086,41 +2107,75 @@ class LiveKaraokeEngine(
                 !isCurrent(id)
             ) return
 
-            var start = 0
-            var count = block.size
+            // The neural estimate is still measured in source-output frames,
+            // but update it only after PEQ/widener processing and queueing have
+            // completed so throughput reflects the full live producer path.
+            val countNeuralThroughput =
+                !forceDspFallback && !usingFastFallback
 
-            // Count only neural output toward the neural throughput estimate.
-            // Fast Live uses the same queue after takeover and must not inflate
-            // the neural rate sample with its much faster DSP throughput.
-            if (!forceDspFallback && !usingFastFallback) {
+            // Process preroll through the stateful effects too, then discard it
+            // from the final chain output. This preserves filter/widener state
+            // at the requested playback position after a seek.
+            val pcm = ShortArray(block.size * 2)
+            var output = 0
+            for (index in 0 until block.size) {
+                pcm[output++] = floatToPcm16(block.left[index])
+                pcm[output++] = floatToPcm16(block.right[index])
+            }
+
+            val effects = outputEffects
+                ?: error("Live Karaoke PEQ/widener chain is not initialized")
+            val processStartNs = System.nanoTime()
+            effects.process(pcm) { processedPcm ->
+                enqueueProcessedPcm(processedPcm)
+            }
+
+            if (countNeuralThroughput) {
                 noteProducerThroughput(block.size)
             }
 
+            profiler.record(
+                LiveKaraokeStageProfiler.Stage.QUEUE_ENQUEUE,
+                System.nanoTime() - processStartNs,
+            )
+        }
+
+        private fun enqueueProcessedPcm(pcm: ShortArray) {
+            if (
+                pcm.isEmpty() ||
+                cancelled.get() ||
+                !isCurrent(id)
+            ) return
+
+            require(pcm.size % 2 == 0) {
+                "PEQ/widener output must contain complete stereo frames"
+            }
+
+            var startFrames = 0
+            var frameCount = pcm.size / 2
+
+            // The trim occurs after the entire effect chain, so stateful filters
+            // see pre-roll while AudioTrack receives only the selected timeline.
             if (droppedPrerollFrames > 0) {
-                val drop =
-                    min(
-                        droppedPrerollFrames,
-                        count,
-                    )
+                val drop = min(droppedPrerollFrames, frameCount)
                 droppedPrerollFrames -= drop
-                start += drop
-                count -= drop
+                startFrames += drop
+                frameCount -= drop
             }
 
-            if (count <= 0) return
+            if (frameCount <= 0) return
 
-            val pcm = ShortArray(count * 2)
-            var output = 0
-
-            for (index in start until start + count) {
-                pcm[output++] =
-                    floatToPcm16(block.left[index])
-                pcm[output++] =
-                    floatToPcm16(block.right[index])
-            }
+            val startSamples = startFrames * 2
+            val endSamples = startSamples + frameCount * 2
+            val readyPcm =
+                if (startSamples == 0 && endSamples == pcm.size) {
+                    pcm
+                } else {
+                    pcm.copyOfRange(startSamples, endSamples)
+                }
 
             val queueStartNs = System.nanoTime()
-            queue?.put(pcm) ?: error("Live PCM queue is not initialized")
+            queue?.put(readyPcm) ?: error("Live PCM queue is not initialized")
             profiler.record(
                 LiveKaraokeStageProfiler.Stage.QUEUE_ENQUEUE,
                 System.nanoTime() - queueStartNs,
