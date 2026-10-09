@@ -98,11 +98,16 @@ internal object LiveKaraokePerformancePolicy {
     // engine silently used its own private copy of 4; 4 is the value that
     // has actually been shipping, so behaviour is unchanged.
     const val AUDIO_TRACK_BUFFER_SECONDS = 4
-    const val STARTUP_BUFFER_SECONDS = 6
+    // Five seconds plus one complete MDX generation window is the minimum.
+    // The generation window (about 5.8 s for MDX 9482) dominates on this model.
+    const val STARTUP_BUFFER_SECONDS = 5
     const val STARTUP_BUFFER_WINDOWS = 1
     // Permit slightly sub-real-time devices only when a bounded safety buffer
     // can cover the measured deficit for the remaining track.
     const val MIN_NEURAL_SUSTAINED_RATE = 0.90
+    // Early start is allowed only when the first complete window has clear
+    // throughput headroom; borderline phones still complete two-window calibration.
+    const val FIRST_WINDOW_EARLY_START_RATE = 1.20
     const val MAX_NEURAL_STARTUP_SECONDS = 24.0
 }
 
@@ -298,6 +303,10 @@ internal fun recommendedLiveKaraokeCpuThreads(
     return ((availableProcessors + 1) / 2)
         .coerceIn(1, 4)
 }
+
+internal fun canStartLiveKaraokeAfterFirstWindow(firstWindowRate: Double): Boolean =
+    firstWindowRate.isFinite() &&
+        firstWindowRate >= LiveKaraokePerformancePolicy.FIRST_WINDOW_EARLY_START_RATE
 
 internal fun isNeuralLiveStartupViable(
     measuredProducerRate: Double,
@@ -1840,20 +1849,6 @@ class LiveKaraokeEngine(
                 return startupTargetFrames
             }
 
-            val measuredRate =
-                estimatedProducerRate
-                    .takeIf { it.isFinite() && it > 0.0 }
-
-            if (measuredRate == null) {
-                return calculateLiveKaraokeStartupBufferFrames(
-                    sourceSampleRate = sourceSampleRate,
-                    generatedPerWindow = generatedPerWindow,
-                    startupBufferSeconds = STARTUP_BUFFER_SECONDS,
-                    startupBufferWindows = STARTUP_BUFFER_WINDOWS,
-                    maxLookaheadFrames = maxLookaheadFrames,
-                )
-            }
-
             val remainingSeconds =
                 (
                     durationMs
@@ -1862,6 +1857,69 @@ class LiveKaraokeEngine(
                 )
                     .toDouble() /
                     1000.0
+
+            val measuredRate =
+                estimatedProducerRate
+                    .takeIf { it.isFinite() && it > 0.0 }
+
+            if (measuredRate == null) {
+                val firstWindowRate =
+                    throughputTracker
+                        ?.firstWindowRate
+                        ?.takeIf { it.isFinite() && it > 0.0 }
+
+                if (firstWindowRate != null) {
+                    if (firstWindowRate < MIN_NEURAL_SUSTAINED_RATE) {
+                        throw NeuralLiveNotViableException(
+                            "First MDX-Net window measured %.2fx real-time; below the %.2fx sustained threshold."
+                                .format(
+                                    firstWindowRate,
+                                    MIN_NEURAL_SUSTAINED_RATE,
+                                )
+                        )
+                    }
+
+                    /*
+                     * Do not make every phone wait for a second full model
+                     * inference just to prove that a clearly fast first window
+                     * is fast. A >=1.20x first-window rate leaves about one
+                     * second of headroom in the model's ~5.8 s generation
+                     * window, and the bounded queue/underrun watchdog remains
+                     * active after playback begins.
+                     */
+                    if (canStartLiveKaraokeAfterFirstWindow(firstWindowRate)) {
+                        val firstWindowTarget =
+                            calculateLiveKaraokeSafeBufferFrames(
+                                sourceSampleRate = sourceSampleRate,
+                                generatedPerWindow = generatedPerWindow,
+                                startupBufferSeconds = STARTUP_BUFFER_SECONDS,
+                                startupBufferWindows = STARTUP_BUFFER_WINDOWS,
+                                remainingSeconds = remainingSeconds,
+                                measuredProducerRate = firstWindowRate,
+                                safetyMarginSeconds = LIVE_SAFETY_MARGIN_SECONDS,
+                                maxLookaheadFrames = maxLookaheadFrames,
+                            )
+
+                        if (
+                            firstWindowTarget.toLong() <=
+                                generatedPerWindow.toLong() +
+                                    (sourceSampleRate / 10).toLong()
+                        ) {
+                            startupTargetFrames = firstWindowTarget
+                            startupTargetFinalized = true
+                            return startupTargetFrames
+                        }
+                    }
+                }
+
+                return calculateLiveKaraokeStartupBufferFrames(
+                    sourceSampleRate = sourceSampleRate,
+                    generatedPerWindow = generatedPerWindow,
+                    startupBufferSeconds = STARTUP_BUFFER_SECONDS,
+                    startupBufferWindows = STARTUP_BUFFER_WINDOWS,
+                    maxLookaheadFrames = maxLookaheadFrames,
+                )
+            }
 
             if (measuredRate < MIN_NEURAL_SUSTAINED_RATE) {
                 throw NeuralLiveNotViableException(
