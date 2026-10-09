@@ -1,8 +1,10 @@
 package com.example.musicplayer
 
 import android.content.Context
+import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -65,6 +67,28 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession = mediaSession
+
+    /**
+     * Keep the service alive while playback is requested, including during
+     * buffering. Player.isPlaying is false during buffering, so delegating
+     * to the default isPlaying-based task-removal policy can stop a valid
+     * stream and tear down the DSP engines prematurely.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (!::player.isInitialized) {
+            stopSelf()
+            return
+        }
+
+        val keepPlaybackService =
+            player.playWhenReady &&
+                player.mediaItemCount > 0 &&
+                player.playbackState != Player.STATE_ENDED
+
+        if (!keepPlaybackService) {
+            pauseAllPlayersAndStopSelf()
+        }
+    }
 
     override fun onDestroy() {
         if (::mediaSession.isInitialized) mediaSession.release()

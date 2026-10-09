@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keep the 29.7 MB bundled-model copy out of Auto Backup / device transfer.
+     It is re-installed from the APK asset on first use, and a payload this
+     large can push the whole app over the Auto Backup size quota. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="models" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="models" />
+    </device-transfer>
+</data-extraction-rules>
