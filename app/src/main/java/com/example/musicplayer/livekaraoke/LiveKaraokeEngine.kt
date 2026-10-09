@@ -2098,6 +2098,12 @@ class LiveKaraokeEngine(
                     MediaFormat.KEY_SAMPLE_RATE
                 ) ?: sourceSampleRate
 
+            // The extractor's compressed sample timestamp is only an estimate
+            // of the first decoded PCM frame (codecs may add priming/delay).
+            // Replace the estimate with MediaCodec's actual output PTS before
+            // the streaming separator can emit any processed audio.
+            var firstPcmTimestampCaptured = false
+
             while (
                 !outputEnded &&
                 !cancelled.get()
@@ -2207,6 +2213,18 @@ class LiveKaraokeEngine(
                                 bufferInfo.size > 0 &&
                                 !isConfig
                             ) {
+                                if (!firstPcmTimestampCaptured) {
+                                    val firstPcmPtsUs =
+                                        bufferInfo.presentationTimeUs.coerceAtLeast(0L)
+                                    droppedPrerollFrames =
+                                        calculateLiveKaraokePrerollFrames(
+                                            playbackStartMs = playbackStartMs,
+                                            actualDecodeStartUs = firstPcmPtsUs,
+                                            sampleRate = sourceSampleRate,
+                                        )
+                                    firstPcmTimestampCaptured = true
+                                }
+
                                 val duplicate =
                                     outputBuffer
                                         .duplicate()
