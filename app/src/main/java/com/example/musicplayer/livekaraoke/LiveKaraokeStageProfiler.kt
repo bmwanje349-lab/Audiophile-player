@@ -13,6 +13,7 @@ internal class LiveKaraokeStageProfiler {
         ONNX_INFERENCE,
         MDX_ISTFT,
         NATIVE_DSP,
+        PEQ_WIDENER,
         QUEUE_ENQUEUE,
         AUDIOTRACK_WRITE,
     }

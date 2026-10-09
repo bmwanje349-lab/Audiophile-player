@@ -105,6 +105,55 @@ class LiveKaraokeAndroidInstrumentationTest {
     }
 
     @Test
+    fun liveKaraokePeqAndWidenerChainPreservesFramesAndDrainsItsTail() {
+        val sampleRate = 44_100
+        val totalFrames = sampleRate / 2
+        val blockFrames = 2_048
+        val emitted = ArrayList<ShortArray>()
+        val effects = LiveKaraokeAudioEffects(context, sampleRate)
+
+        try {
+            var frameStart = 0
+            while (frameStart < totalFrames) {
+                val frames = minOf(blockFrames, totalFrames - frameStart)
+                val pcm = ShortArray(frames * 2)
+                for (frame in 0 until frames) {
+                    val absoluteFrame = frameStart + frame
+                    pcm[frame * 2] =
+                        (sin(2.0 * PI * 440.0 * absoluteFrame / sampleRate) * 12_000.0)
+                            .toInt()
+                            .toShort()
+                    pcm[frame * 2 + 1] =
+                        (sin(2.0 * PI * 660.0 * absoluteFrame / sampleRate) * 9_000.0)
+                            .toInt()
+                            .toShort()
+                }
+
+                effects.process(pcm) { output -> emitted += output }
+                frameStart += frames
+            }
+
+            effects.finish { output -> emitted += output }
+
+            assertEquals(
+                "PEQ/widener chain dropped or duplicated PCM frames",
+                totalFrames * 2,
+                emitted.sumOf { it.size },
+            )
+            assertTrue(
+                "PEQ/widener chain produced no audible-range PCM samples",
+                emitted.any { block -> block.any { it != 0.toShort() } },
+            )
+            assertTrue(
+                "PEQ/widener chain emitted a partial stereo frame",
+                emitted.all { block -> block.size % 2 == 0 },
+            )
+        } finally {
+            effects.close()
+        }
+    }
+
+    @Test
     fun bundledMdxModelExecutesThroughAndroidOnnxRuntime() {
         val spec = MdxModelSpec.LIGHT_9482
         val file = MdxModelManager.ensureInstalled(context, spec)
