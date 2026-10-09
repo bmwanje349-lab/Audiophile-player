@@ -17,6 +17,9 @@ internal class LiveKaraokeThroughputTracker(
     private var lastRateSampleNs = 0L
     private var lastRateSampleFrames = 0L
 
+    var firstWindowRate: Double = Double.NaN
+        private set
+
     var calibratedRate: Double = Double.NaN
         private set
 
@@ -45,9 +48,24 @@ internal class LiveKaraokeThroughputTracker(
         if (!started) start(nowNs)
         totalFrames += frames.toLong()
 
-        // Do not calibrate from only the first model window. Requiring two
-        // full windows makes startup representative of sustained inference,
-        // including model warm-up and window-to-window overhead.
+        /*
+         * The first-window rate is a conservative warm-start signal. It may
+         * authorize early playback only at >=1.20x; all borderline cases wait
+         * for the two-window calibrated rate below.
+         */
+        if (
+            !firstWindowRate.isFinite() &&
+            totalFrames >= rollingWindowFrames &&
+            nowNs > startedAtNs
+        ) {
+            val elapsedSeconds =
+                (nowNs - startedAtNs).toDouble() / 1_000_000_000.0
+            firstWindowRate =
+                (rollingWindowFrames.toDouble() / sampleRate.toDouble()) /
+                    elapsedSeconds
+        }
+
+        // Two complete windows remain the calibrated, sustained-rate estimate.
         if (
             !calibratedRate.isFinite() &&
             totalFrames >= calibrationFrames &&

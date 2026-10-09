@@ -18,6 +18,21 @@ class LiveKaraokeThroughputTrackerTest {
         )
 
     @Test
+    fun firstWindowRateIsAvailableBeforeTwoWindowCalibration() {
+        val tracker = newTracker()
+        tracker.start(1_000_000_000L)
+        emitWindow(tracker, 7_000_000_000L)
+
+        assertTrue(tracker.firstWindowRate.isFinite())
+        assertEquals(
+            (framesPerWindow.toDouble() / sampleRate) / 6.0,
+            tracker.firstWindowRate,
+            0.002,
+        )
+        assertFalse(tracker.calibratedRate.isFinite())
+    }
+
+    @Test
     fun firstModelWindowDoesNotPretendToBeSustainedThroughput() {
         val tracker = newTracker()
         tracker.start(1_000_000_000L)

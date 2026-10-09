@@ -10,6 +10,27 @@ import java.security.MessageDigest
 object MdxModelManager {
     private const val MODELS_DIR = "models/mdx"
 
+    /*
+     * A live seek starts a fresh decode session but reuses the already loaded
+     * ONNX Runtime session. Re-hashing the 30 MB model for every seek adds
+     * avoidable disk I/O and startup delay. Cache only successful verification
+     * for this process, keyed by path, size and modification time; the public
+     * isInstalled() method below still performs a fresh cryptographic check.
+     */
+    private val verifiedFingerprints = HashMap<String, String>()
+
+    private fun fingerprint(file: File): String =
+        "${file.length()}:${file.lastModified()}"
+
+    private fun hasCachedVerification(file: File, spec: MdxModelSpec): Boolean =
+        file.isFile &&
+            file.length() == spec.fileSizeBytes &&
+            verifiedFingerprints[file.absolutePath] == fingerprint(file)
+
+    private fun rememberVerification(file: File) {
+        verifiedFingerprints[file.absolutePath] = fingerprint(file)
+    }
+
     fun file(context: Context, spec: MdxModelSpec): File =
         File(File(context.applicationContext.filesDir, MODELS_DIR), spec.fileName)
 
@@ -43,17 +64,30 @@ object MdxModelManager {
         val appContext = context.applicationContext
         val target = file(appContext, spec)
 
-        if (isInstalled(appContext, spec)) return target
+        if (hasCachedVerification(target, spec)) return target
+        if (isInstalled(appContext, spec)) {
+            rememberVerification(target)
+            return target
+        }
+
         target.parentFile?.mkdirs()
+        verifiedFingerprints.remove(target.absolutePath)
 
         check(hasBundledModel(appContext, spec)) {
             "Bundled MDX model is missing from the APK: ${spec.assetPath}"
         }
 
+        /*
+         * installBundledAsset() hashes the temporary copy before renaming it
+         * into place. Renaming does not change the bytes, so hashing the same
+         * 30 MB payload again after rename is redundant. Confirm the expected
+         * size and cache the exact verified file fingerprint instead.
+         */
         installBundledAsset(appContext, spec, target, progress)
-        check(isInstalled(appContext, spec)) {
-            "Bundled MDX model failed final checksum verification"
+        check(target.isFile && target.length() == spec.fileSizeBytes) {
+            "Bundled MDX model failed final size verification"
         }
+        rememberVerification(target)
         return target
     }
 
