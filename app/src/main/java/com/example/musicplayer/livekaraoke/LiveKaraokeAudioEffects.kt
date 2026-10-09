@@ -105,7 +105,7 @@ internal class LiveKaraokeAudioEffects(
         }
 
         inputBuffer.clear()
-        pcm.forEach(inputBuffer::putShort)
+        for (sample in pcm) inputBuffer.putShort(sample)
         inputBuffer.flip()
 
         pipeline.queueInput(inputBuffer)
