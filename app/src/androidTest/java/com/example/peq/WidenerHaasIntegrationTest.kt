@@ -47,10 +47,11 @@ class WidenerHaasIntegrationTest {
             val input = ByteBuffer.allocateDirect(frames * 8).order(ByteOrder.nativeOrder())
             repeat(frames) { frame ->
                 val t = frame.toDouble() / sampleRate
-                val mono =
-                    0.16f * sin(2.0 * PI * 220.0 * t) +
-                    0.10f * sin(2.0 * PI * 437.0 * t + 0.23) +
-                    0.06f * sin(2.0 * PI * 1331.0 * t + 0.71)
+                val mono = (
+                    0.16 * sin(2.0 * PI * 220.0 * t) +
+                    0.10 * sin(2.0 * PI * 437.0 * t + 0.23) +
+                    0.06 * sin(2.0 * PI * 1331.0 * t + 0.71)
+                ).toFloat()
                 input.putFloat(mono)
                 input.putFloat(mono)
             }
