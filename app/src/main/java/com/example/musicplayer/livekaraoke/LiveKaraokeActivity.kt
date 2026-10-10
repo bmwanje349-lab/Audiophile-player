@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.example.musicplayer.vocalremoverui.VocalRemoverActivity
 import java.util.Locale
 
 /**
@@ -30,15 +31,6 @@ class LiveKaraokeActivity : AppCompatActivity() {
             "extra_live_karaoke_track_title"
         const val EXTRA_TRACK_POSITION_MS =
             "extra_live_karaoke_track_position_ms"
-
-        // Resolved by name so this bundle compiles without the separate
-        // AI Vocal Remover bundle (values match VocalRemoverActivity).
-        private const val VOCAL_REMOVER_ACTIVITY =
-            "com.example.musicplayer.vocalremoverui.VocalRemoverActivity"
-        private const val VOCAL_REMOVER_EXTRA_URI = "extra_track_uri"
-        private const val VOCAL_REMOVER_EXTRA_TITLE = "extra_track_title"
-        private const val PLAYBACK_SERVICE =
-            "com.example.musicplayer.PlaybackService"
 
         private const val BG =
             0xFF0B0D10.toInt()
@@ -184,18 +176,14 @@ class LiveKaraokeActivity : AppCompatActivity() {
                     status.text =
                         when (currentState) {
                             LiveKaraokeEngine.State.STOPPED ->
-                                if (autoStartRequested) {
-                                    "Ready — tap Start Live Karaoke."
-                                } else {
-                                    "Starting live karaoke automatically…"
-                                }
+                                "Starting live karaoke automatically…"
 
                             LiveKaraokeEngine.State.BUFFERING,
                             LiveKaraokeEngine.State.SEEKING ->
-                                "Preparing the live vocal-removal stream…"
+                                "Buffering the live neural stream…"
 
                             LiveKaraokeEngine.State.PLAYING ->
-                                "Live karaoke is playing"
+                                "Live karaoke playing — MDX-Net is processing ahead"
 
                             LiveKaraokeEngine.State.PAUSED ->
                                 "Live karaoke paused"
@@ -367,7 +355,8 @@ class LiveKaraokeActivity : AppCompatActivity() {
         body.addView(
             TextView(this).apply {
                 text =
-                    "Neural AI separation when sustainable → bounded buffer → instrumental playback"
+                    "MDX-Net neural vocal removal → " +
+                        "bounded look-ahead → AudioTrack"
                 setTextColor(TEXT_SECONDARY)
                 textSize = 13f
                 setPadding(
@@ -385,7 +374,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
                     if (trackUri == null) {
                         "No current local track was supplied."
                     } else {
-                        "Ready — Live Karaoke tries neural AI separation first. If the phone cannot sustain it, it switches to Fast DSP suppression, which may leave vocals audible."
+                        "Ready — start live karaoke to begin MDX-Net processing."
                     }
                 setTextColor(MUTED)
                 textSize = 12f
@@ -473,13 +462,10 @@ class LiveKaraokeActivity : AppCompatActivity() {
         body.addView(
             TextView(this).apply {
                 text =
-                    "Live Karaoke checks the first complete MDX-Net window. Phones with clear " +
-                        "processing headroom can start sooner; borderline phones wait for a " +
-                        "two-window throughput check and may build a larger bounded buffer " +
-                        "(up to 24 seconds). If AI cannot safely keep up or the phone is critically " +
-                        "hot, it may switch to Fast DSP suppression; that mode is not AI separation " +
-                        "and can leave vocals audible. Use Offline AI Vocal Remover for a complete " +
-                        "rendered AI instrumental."
+                    "Live Karaoke starts automatically. The first MDX window " +
+                        "is buffered before the instrumental begins, then inference " +
+                        "continues ahead of the playhead inside a fixed memory budget. " +
+                        "Seeking rebuilds context from slightly before the target."
                 setTextColor(TEXT_SECONDARY)
                 textSize = 12f
                 setPadding(
@@ -506,26 +492,21 @@ class LiveKaraokeActivity : AppCompatActivity() {
                 text = "Open Offline AI Vocal Remover"
                 setOnClickListener {
                     trackUri?.let { uri ->
-                        runCatching {
-                            startActivity(
-                                Intent().setClassName(
-                                    this@LiveKaraokeActivity,
-                                    VOCAL_REMOVER_ACTIVITY,
-                                ).apply {
-                                    putExtra(
-                                        VOCAL_REMOVER_EXTRA_URI,
-                                        uri,
-                                    )
-                                    putExtra(
-                                        VOCAL_REMOVER_EXTRA_TITLE,
-                                        trackTitle,
-                                    )
-                                },
-                            )
-                        }.onFailure {
-                            status.text =
-                                "Offline AI Vocal Remover is not available in this build."
-                        }
+                        startActivity(
+                            Intent(
+                                this@LiveKaraokeActivity,
+                                VocalRemoverActivity::class.java,
+                            ).apply {
+                                putExtra(
+                                    VocalRemoverActivity.EXTRA_TRACK_URI,
+                                    uri,
+                                )
+                                putExtra(
+                                    VocalRemoverActivity.EXTRA_TRACK_TITLE,
+                                    trackTitle,
+                                )
+                            },
+                        )
                     }
                 }
             },
@@ -623,7 +604,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
                         this,
                         ComponentName(
                             this,
-                            PLAYBACK_SERVICE,
+                            com.example.musicplayer.PlaybackService::class.java,
                         ),
                     ),
                 ).buildAsync()
@@ -666,18 +647,6 @@ class LiveKaraokeActivity : AppCompatActivity() {
                 val uri = trackUri ?: return
                 autoStartRequested = true
 
-                // After a finished track the seek bar sits at the end; restart
-                // from the beginning instead of instantly completing again.
-                val resumeAtMs =
-                    if (
-                        progress.max > 1 &&
-                        progress.progress >= progress.max - 1_000
-                    ) {
-                        0L
-                    } else {
-                        progress.progress.toLong()
-                    }
-
                 val startIntent =
                     Intent(
                         this,
@@ -693,7 +662,7 @@ class LiveKaraokeActivity : AppCompatActivity() {
                         )
                         putExtra(
                             LiveKaraokeService.EXTRA_POSITION_MS,
-                            resumeAtMs,
+                            progress.progress.toLong(),
                         )
                     }
 
