@@ -12,6 +12,9 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.example.audio.LoudnessProcessor
+import com.example.audio.LoudnessSettings
+import com.example.audio.ToFloatProcessor
 import com.example.peq.PeqAudioProcessor
 import com.example.peq.PeqEngine
 import com.example.peq.WidenerAudioProcessor
@@ -33,6 +36,7 @@ class PlaybackService : MediaSessionService() {
         DspRuntime.widenerEngine = widenerEngine
 
         EqSettingsStore(this).applyTo(peqEngine, widenerEngine)
+        LoudnessSettings.load(this)
 
         val peqProcessor = PeqAudioProcessor(peqEngine)
         val widenerProcessor = WidenerAudioProcessor(widenerEngine)
@@ -45,9 +49,10 @@ class PlaybackService : MediaSessionService() {
             ): AudioSink? {
                 // DSP requires PCM processing. Offload is deliberately disabled.
                 return DefaultAudioSink.Builder(context)
-                    .setEnableFloatOutput(false)
+                    // Float end-to-end: avoids 16-bit quantisation/clipping between DSP stages.
+                    .setEnableFloatOutput(true)
                     .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
-                    .setAudioProcessors(arrayOf(peqProcessor, widenerProcessor))
+                    .setAudioProcessors(arrayOf(ToFloatProcessor(), peqProcessor, widenerProcessor, LoudnessProcessor()))
                     .build()
             }
         }
@@ -102,4 +107,3 @@ class PlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 }
-
