@@ -16,6 +16,7 @@ import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -318,5 +319,44 @@ class LoudnessProcessor : BaseAudioProcessor() {
         val ceil = 10.0.pow(min(0.0, LoudnessSettings.ceilingDb.toDouble()) / 20.0).toFloat()
         for (i in 0 until frames) emit(zero, 0f, ceil, out)
         out.flip()
+    }
+}
+
+
+/**
+ * Converts the internal float DSP bus back to standard signed 16-bit PCM for AudioTrack output.
+ *
+ * Keeping the DSP stages in float retains headroom between PEQ, widening and loudness, while
+ * avoiding devices/drivers that cannot reliably start a float-format AudioTrack. This processor
+ * is deliberately last in the custom chain.
+ */
+@UnstableApi
+class FloatToPcm16Processor : BaseAudioProcessor() {
+    override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
+        if (inputAudioFormat.encoding != C.ENCODING_PCM_FLOAT) {
+            throw UnhandledAudioFormatException(inputAudioFormat)
+        }
+        return AudioFormat(
+            inputAudioFormat.sampleRate,
+            inputAudioFormat.channelCount,
+            C.ENCODING_PCM_16BIT,
+        )
+    }
+
+    override fun queueInput(inputBuffer: ByteBuffer) {
+        val sampleCount = inputBuffer.remaining() / 4
+        if (sampleCount <= 0) return
+
+        val output = replaceOutputBuffer(sampleCount * 2).order(ByteOrder.nativeOrder())
+        val input = inputBuffer.order(ByteOrder.nativeOrder())
+        repeat(sampleCount) {
+            val raw = input.float
+            val finite = if (raw.isFinite()) raw else 0f
+            val bounded = finite.coerceIn(-1f, 1f)
+            val quantized = (bounded * 32768f).roundToInt().coerceIn(-32768, 32767)
+            output.putShort(quantized.toShort())
+        }
+        inputBuffer.position(input.position())
+        output.flip()
     }
 }
