@@ -232,8 +232,8 @@ class ImmersionProcessor : BaseAudioProcessor() {
             }
             val sideHp = sideHighPass.process(side)
             val enhancedSide = side + sideShelf.process(sideHp) - sideHp
-            var outL = mid + side + (enhancedSide - side) * sSpace
-            var outR = mid - side - (enhancedSide - side) * sSpace
+            var outL = mid + enhancedSide
+            var outR = mid - enhancedSide
 
             // Short, damped room reflections; filter state continues even when bypassed.
             val roomIn = roomLowPass.process(roomHighPass.process(mid + 0.5 * side))
