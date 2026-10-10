@@ -18,11 +18,14 @@ import android.view.Gravity
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import android.text.Editable
+import android.text.TextWatcher
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -56,6 +59,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var miniProgress: LinearProgressIndicator
     private lateinit var libraryAdapter: TrackAdapter
     private lateinit var statusText: TextView
+    private lateinit var libraryRecycler: androidx.recyclerview.widget.RecyclerView
+    private var librarySearchQuery = ""
 
     private val uiHandler = Handler(Looper.getMainLooper())
     private var allTracks: List<TrackItem> = emptyList()
@@ -377,6 +382,26 @@ class MainActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(-2, dp(44)))
         root.addView(top, LinearLayout.LayoutParams(-1, dp(56)))
 
+        val search = EditText(this).apply {
+            hint = "Search songs, artists…"
+            setSingleLine(true)
+            setTextColor(TEXT)
+            setHintTextColor(MUTED)
+            textSize = 15f
+            setPadding(dp(14), 0, dp(14), 0)
+            background = roundedDrawable(SURFACE, 16)
+            contentDescription = "Search songs and artists"
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    librarySearchQuery = s?.toString()?.trim().orEmpty()
+                    filterLibrary()
+                }
+                override fun afterTextChanged(s: Editable?) = Unit
+            })
+        }
+        root.addView(search, LinearLayout.LayoutParams(-1, dp(52)).apply { bottomMargin = dp(8) })
+
         statusText = TextView(this).apply {
             setTextColor(TEXT_SECONDARY)
             textSize = 13f
@@ -384,15 +409,15 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(statusText, LinearLayout.LayoutParams(-1, dp(30)))
 
-        val recycler = androidx.recyclerview.widget.RecyclerView(this).apply {
+        libraryRecycler = androidx.recyclerview.widget.RecyclerView(this).apply {
             layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this@MainActivity)
             setPadding(0, dp(4), 0, dp(8))
             clipToPadding = false
         }
         libraryAdapter = TrackAdapter(this) { index -> playFromLibrary(index) }
-        recycler.adapter = libraryAdapter
-        root.addView(recycler, LinearLayout.LayoutParams(-1, 0, 1f))
-        if (allTracks.isNotEmpty()) libraryAdapter.submit(allTracks)
+        libraryRecycler.adapter = libraryAdapter
+        root.addView(libraryRecycler, LinearLayout.LayoutParams(-1, 0, 1f))
+        filterLibrary()
         return root
     }
 
@@ -829,12 +854,33 @@ class MainActivity : AppCompatActivity() {
         MediaStoreRepository.scan(this) { tracks ->
             runOnUiThread {
                 allTracks = tracks
-                if (::libraryAdapter.isInitialized) libraryAdapter.submit(tracks)
-                statusTextSafe(if (tracks.isEmpty()) "No local music was found." else "${tracks.size} tracks")
+                if (::libraryAdapter.isInitialized) filterLibrary()
+                else statusTextSafe(if (tracks.isEmpty()) "No local music was found." else "${tracks.size} tracks")
                 if (currentTab == TAB_HOME && !nowPlayingShown) {
                     // Rebuild Home so the recent list is immediately visible after a scan.
                     selectTab(TAB_HOME)
                 }
+            }
+        }
+    }
+
+    private fun filterLibrary() {
+        if (!::libraryAdapter.isInitialized) return
+        val q = librarySearchQuery.lowercase()
+        val filtered = if (q.isBlank()) {
+            allTracks
+        } else {
+            allTracks.filter { track ->
+                track.title.lowercase().contains(q) ||
+                    track.artist.lowercase().contains(q)
+            }
+        }
+        libraryAdapter.submit(filtered)
+        if (::statusText.isInitialized) {
+            statusText.text = when {
+                q.isBlank() -> if (allTracks.isEmpty()) "No local music was found." else "${allTracks.size} tracks"
+                filtered.isEmpty() -> "No songs match “$librarySearchQuery”."
+                else -> "${filtered.size} matching songs"
             }
         }
     }
