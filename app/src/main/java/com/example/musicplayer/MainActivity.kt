@@ -61,6 +61,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var libraryRecycler: androidx.recyclerview.widget.RecyclerView
     private var librarySearchQuery = ""
+    // Preserve taps made while MediaController is still connecting.
+    private var pendingTrackId: Long? = null
 
     private val uiHandler = Handler(Looper.getMainLooper())
     private var allTracks: List<TrackItem> = emptyList()
@@ -414,7 +416,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, dp(4), 0, dp(8))
             clipToPadding = false
         }
-        libraryAdapter = TrackAdapter(this) { index -> playFromLibrary(index) }
+        libraryAdapter = TrackAdapter(this) { track -> playFromLibrary(track) }
         libraryRecycler.adapter = libraryAdapter
         root.addView(libraryRecycler, LinearLayout.LayoutParams(-1, 0, 1f))
         filterLibrary()
@@ -816,6 +818,7 @@ class MainActivity : AppCompatActivity() {
                 controller = connected
                 controller?.addListener(playerListener)
                 refreshPlaybackUi()
+                playPendingTrackIfReady()
                 if (content.childCount == 0) selectTab(currentTab)
             }
         }, ContextCompat.getMainExecutor(this))
@@ -856,6 +859,7 @@ class MainActivity : AppCompatActivity() {
                 allTracks = tracks
                 if (::libraryAdapter.isInitialized) filterLibrary()
                 else statusTextSafe(if (tracks.isEmpty()) "No local music was found." else "${tracks.size} tracks")
+                playPendingTrackIfReady()
                 if (currentTab == TAB_HOME && !nowPlayingShown) {
                     // Rebuild Home so the recent list is immediately visible after a scan.
                     selectTab(TAB_HOME)
@@ -894,13 +898,57 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun playFromLibrary(index: Int) {
+        allTracks.getOrNull(index)?.let(::playFromLibrary)
+    }
+
+    /**
+     * Play by stable MediaStore ID rather than by the currently filtered list position.
+     * This prevents search results from starting an unrelated track.
+     */
+    private fun playFromLibrary(track: TrackItem) {
+        val c = controller
+        if (c == null) {
+            pendingTrackId = track.id
+            Toast.makeText(this, "Connecting to the player…", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startTrackPlayback(track, c)
+    }
+
+    private fun playPendingTrackIfReady() {
+        val id = pendingTrackId ?: return
         val c = controller ?: return
+        val track = allTracks.firstOrNull { it.id == id } ?: return
+        pendingTrackId = null
+        startTrackPlayback(track, c)
+    }
+
+    private fun startTrackPlayback(track: TrackItem, c: MediaController) {
+        val index = allTracks.indexOfFirst { it.id == track.id }
+        if (index < 0) {
+            Toast.makeText(this, "That song is no longer in your library. Rescan and try again.", Toast.LENGTH_LONG).show()
+            return
+        }
+
         val items = allTracks.map { it.toMediaItem() }
-        if (items.isEmpty() || index !in items.indices) return
-        c.setMediaItems(items, index, 0L)
-        c.prepare()
-        c.play()
-        showNowPlaying()
+        if (index !in items.indices) {
+            Toast.makeText(this, "No playable songs were found. Rescan your library.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        runCatching {
+            c.setMediaItems(items, index, 0L)
+            c.prepare()
+            c.play()
+            showNowPlaying()
+        }.onFailure { error ->
+            Log.e("MainActivity", "Unable to start selected track id=${track.id}", error)
+            Toast.makeText(
+                this,
+                "Couldn't play this song: ${error.message ?: error.javaClass.simpleName}",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
     }
 
     private fun togglePlay() {
@@ -1194,7 +1242,7 @@ class MainActivity : AppCompatActivity() {
 
 private class TrackAdapter(
     private val context: Context,
-    private val onClick: (Int) -> Unit,
+    private val onClick: (TrackItem) -> Unit,
 ) : androidx.recyclerview.widget.RecyclerView.Adapter<TrackAdapter.Holder>() {
     private var items: List<TrackItem> = emptyList()
     var playingId: Long? = null
@@ -1244,7 +1292,7 @@ private class TrackAdapter(
         holder.title.text = item.title
         holder.artist.text = item.artist
         holder.duration.text = format(item.durationMs)
-        holder.root.setOnClickListener { onClick(position) }
+        holder.root.setOnClickListener { onClick(item) }
         holder.title.setTextColor(if (item.id == playingId) 0xFF54B8FF.toInt() else 0xFFF5F7FA.toInt())
     }
 
