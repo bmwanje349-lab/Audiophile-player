@@ -116,6 +116,17 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(BG)
         }
 
+        // Android 15 enforces edge-to-edge for targetSdk 35+. Reserve the navigation-bar
+        // inset so the bottom navigation labels and mini-player are not hidden behind gestures.
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val navBarBottom = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.navigationBars()
+            ).bottom
+            view.setPadding(0, 0, 0, navBarBottom)
+            insets
+        }
+        androidx.core.view.ViewCompat.requestApplyInsets(root)
+
         toolbar = MaterialToolbar(this).apply {
             setTitleTextColor(TEXT)
             setBackgroundColor(BG)

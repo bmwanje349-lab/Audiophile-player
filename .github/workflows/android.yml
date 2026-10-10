@@ -104,6 +104,15 @@ jobs:
           grep -Fq 'ci/audiophile-debug.keystore.b64' app/build.gradle.kts
           test -f ci/audiophile-debug.keystore.b64
 
+      - name: Run stereo widener native host regression test
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -fno-fast-math \
+            -Iapp/src/main/cpp \
+            host_tests/widener_host_test.cpp \
+            -o /tmp/audiophile-widener-host-test
+          /tmp/audiophile-widener-host-test
+
       - name: Run JVM streaming regression tests
         run: |
           set -euo pipefail
