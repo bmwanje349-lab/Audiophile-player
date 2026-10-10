@@ -107,32 +107,125 @@ private class ImmersionBiquad {
     }
 }
 
+/**
+ * Small-room reflection and reverb network.
+ *
+ * Early taps establish space; four damped feedback combs per side and two
+ * all-pass diffusers create a smoother late tail than a single feedback delay.
+ * A symmetric mono-mid room send avoids biasing the left or right channel.
+ */
 private class ImmersionRoom(sampleRate: Int) {
-    private val preDelay = FloatArray(max(1, (sampleRate * 0.014).toInt()))
-    private val left = FloatArray(max(8, (sampleRate * 0.021).toInt()))
-    private val right = FloatArray(max(8, (sampleRate * 0.027).toInt()))
-    private var prePos = 0
-    private var leftPos = 0
-    private var rightPos = 0
-    private var dampL = 0f
-    private var dampR = 0f
+    private val sr = sampleRate.coerceAtLeast(8000)
+    private val reflectionBuffer =
+        FloatArray(max(2, (sr * 0.034).toInt() + 1))
+    private var reflectionWrite = 0
+
+    private fun frames(ms: Double): Int =
+        max(1, (sr * ms / 1000.0).toInt())
+
+    private val tapDelaysL = intArrayOf(
+        frames(7.1), frames(13.9), frames(21.1), frames(29.7),
+    )
+    private val tapDelaysR = intArrayOf(
+        frames(8.3), frames(15.7), frames(23.3), frames(31.3),
+    )
+    private val tapWeights = floatArrayOf(0.42f, 0.28f, 0.18f, 0.12f)
+
+    private fun comb(ms: Double): ImmersionComb {
+        val delay = frames(ms)
+        // About 0.62 s nominal T60, based on the actual delay of each line.
+        val feedback =
+            10.0.pow(-3.0 * delay.toDouble() / sr.toDouble() / 0.62).toFloat()
+        return ImmersionComb(delay, feedback, 0.24f)
+    }
+
+    private val combsL = arrayOf(
+        comb(29.7), comb(37.1), comb(41.1), comb(43.7),
+    )
+    private val combsR = arrayOf(
+        comb(31.1), comb(38.3), comb(42.7), comb(46.1),
+    )
+    private val diffusersL = arrayOf(
+        ImmersionAllPass(frames(5.1), 0.48f),
+        ImmersionAllPass(frames(1.7), 0.32f),
+    )
+    private val diffusersR = arrayOf(
+        ImmersionAllPass(frames(5.5), 0.48f),
+        ImmersionAllPass(frames(1.9), 0.32f),
+    )
+
     var outL = 0f
         private set
     var outR = 0f
         private set
 
+    private fun tap(delay: Int): Float {
+        var index = reflectionWrite - delay
+        if (index < 0) index += reflectionBuffer.size
+        return reflectionBuffer[index]
+    }
+
     fun process(input: Float) {
-        val delayed = preDelay[prePos]
-        preDelay[prePos] = input
-        prePos = (prePos + 1) % preDelay.size
-        outL = left[leftPos]
-        outR = right[rightPos]
-        dampL = outL * 0.55f + dampL * 0.45f
-        dampR = outR * 0.55f + dampR * 0.45f
-        left[leftPos] = delayed * 0.035f + dampL * 0.70f
-        right[rightPos] = delayed * 0.032f + dampR * 0.68f
-        leftPos = (leftPos + 1) % left.size
-        rightPos = (rightPos + 1) % right.size
+        reflectionBuffer[reflectionWrite] = input
+
+        var earlyL = 0f
+        var earlyR = 0f
+        for (i in tapWeights.indices) {
+            earlyL += tap(tapDelaysL[i]) * tapWeights[i]
+            earlyR += tap(tapDelaysR[i]) * tapWeights[i]
+        }
+
+        var lateL = 0f
+        var lateR = 0f
+        for (comb in combsL) lateL += comb.process(input)
+        for (comb in combsR) lateR += comb.process(input)
+        lateL *= 0.25f
+        lateR *= 0.25f
+        for (diffuser in diffusersL) lateL = diffuser.process(lateL)
+        for (diffuser in diffusersR) lateR = diffuser.process(lateR)
+
+        // Conservative wet gains keep ambience below the direct signal.
+        outL = earlyL * 0.28f + lateL * 0.30f
+        outR = earlyR * 0.28f + lateR * 0.30f
+
+        reflectionWrite++
+        if (reflectionWrite >= reflectionBuffer.size) reflectionWrite = 0
+    }
+}
+
+private class ImmersionComb(
+    delaySamples: Int,
+    private val feedback: Float,
+    private val damping: Float,
+) {
+    private val buffer = FloatArray(max(1, delaySamples))
+    private var position = 0
+    private var dampingState = 0f
+
+    fun process(input: Float): Float {
+        val delayed = buffer[position]
+        dampingState += damping * (delayed - dampingState)
+        buffer[position] = input + dampingState * feedback
+        position++
+        if (position >= buffer.size) position = 0
+        return delayed
+    }
+}
+
+private class ImmersionAllPass(
+    delaySamples: Int,
+    private val coefficient: Float,
+) {
+    private val buffer = FloatArray(max(1, delaySamples))
+    private var position = 0
+
+    fun process(input: Float): Float {
+        val delayed = buffer[position]
+        val output = delayed - coefficient * input
+        buffer[position] = input + coefficient * output
+        position++
+        if (position >= buffer.size) position = 0
+        return output
     }
 }
 
@@ -164,8 +257,7 @@ class ImmersionProcessor : BaseAudioProcessor() {
     private var sAir = 0.0
     private var sBass = 0.0
     private var sOn = 0.0
-    private var blockCount = 0
-
+    
     override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
         if (inputAudioFormat.encoding != C.ENCODING_PCM_FLOAT) {
             throw UnhandledAudioFormatException(inputAudioFormat)
@@ -177,7 +269,7 @@ class ImmersionProcessor : BaseAudioProcessor() {
     override fun onFlush() {
         val sr = configuredRate
         sideHighPass = ImmersionBiquad().highPass(sr, 140.0)
-        sideShelf = ImmersionBiquad().highShelf(sr, 1000.0, 0.0)
+        sideShelf = ImmersionBiquad().highShelf(sr, 1000.0, 3.0)
         roomHighPass = ImmersionBiquad().highPass(sr, 220.0)
         roomLowPass = ImmersionBiquad().lowPass(sr, 6500.0)
         room = ImmersionRoom(sr)
@@ -196,7 +288,6 @@ class ImmersionProcessor : BaseAudioProcessor() {
         bassEnvCoef = exp(-1.0 / (0.020 * sr))
         smooth = 1.0 - exp(-1.0 / (0.050 * sr))
         sSpace = 0.0; sAmbience = 0.0; sAir = 0.0; sBass = 0.0; sOn = 0.0
-        blockCount = 0
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
@@ -226,20 +317,19 @@ class ImmersionProcessor : BaseAudioProcessor() {
             val mid = 0.5 * (l + r)
             val side = 0.5 * (l - r)
 
-            // Re-design only coefficients, not filter state, in the audio thread.
-            if ((blockCount++ and 0x3F) == 0) {
-                sideShelf.highShelf(sr = configuredRate, f = 1000.0, gainDb = 5.0 * sSpace)
-            }
+            // Blend toward a fixed, gentle +3 dB shelf. Fixed coefficients
+            // avoid trigonometric filter redesigns on the audio thread.
             val sideHp = sideHighPass.process(side)
-            val enhancedSide = side + sideShelf.process(sideHp) - sideHp
+            val shelfDifference = sideShelf.process(sideHp) - sideHp
+            val enhancedSide = side + sSpace * shelfDifference
             var outL = mid + enhancedSide
             var outR = mid - enhancedSide
 
             // Short, damped room reflections; filter state continues even when bypassed.
-            val roomIn = roomLowPass.process(roomHighPass.process(mid + 0.5 * side))
+            val roomIn = roomLowPass.process(roomHighPass.process(mid))
             room.process(roomIn.toFloat())
-            outL += room.outL * sAmbience * 0.35
-            outR += room.outR * sAmbience * 0.35
+            outL += room.outL * sAmbience
+            outR += room.outR * sAmbience
 
             // Restrained even-harmonic air with fast envelope normalisation.
             val bandL = airLowPassL.process(airHighPassL.process(outL))
@@ -248,8 +338,8 @@ class ImmersionProcessor : BaseAudioProcessor() {
             val bandR = airLowPassR.process(airHighPassR.process(outR))
             envR = max(abs(bandR), envR * envCoef)
             val airR = airOutputHighPassR.process((bandR * bandR) / (envR + 1.0e-3))
-            outL += airL * sAir * 0.35
-            outR += airR * sAir * 0.35
+            outL += airL * sAir * 0.22
+            outR += airR * sAir * 0.22
 
             // Mono bass harmonics add punch/translation without boosting sub-bass energy.
             val bassFundamental = bassLowPass.process(mid)
@@ -257,8 +347,8 @@ class ImmersionProcessor : BaseAudioProcessor() {
             val second = bassFundamental * bassFundamental / (bassEnv + 1.0e-3)
             val third = tanh(6.0 * bassFundamental) / 6.0
             val bassHarmonic = bassLowPassOut.process(bassHighPassOut.process(0.8 * second + 0.6 * third))
-            outL += bassHarmonic * sBass * 0.45
-            outR += bassHarmonic * sBass * 0.45
+            outL += bassHarmonic * sBass * 0.35
+            outR += bassHarmonic * sBass * 0.35
 
             // Still process every filter/delay while disabled; output dry to avoid stale state on re-enable.
             if (sOn < 1.0e-4 && onTarget == 0.0) {
