@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.switchmaterial.SwitchMaterial
 import java.util.Locale
 
 /**
@@ -467,6 +468,31 @@ class LiveKaraokeActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(
                 -1,
                 dp(48),
+            ),
+        )
+
+        body.addView(
+            SwitchMaterial(this).apply {
+                text = "AI mode (better, starts after a few seconds)"
+                setTextColor(TEXT)
+                isChecked =
+                    getSharedPreferences(
+                        LiveKaraokeService.PREFS_NAME,
+                        MODE_PRIVATE,
+                    ).getBoolean(LiveKaraokeService.PREF_NEURAL, false)
+                setOnCheckedChangeListener { _, on ->
+                    getSharedPreferences(
+                        LiveKaraokeService.PREFS_NAME,
+                        MODE_PRIVATE,
+                    ).edit().putBoolean(LiveKaraokeService.PREF_NEURAL, on).apply()
+                    status.text =
+                        if (on) "AI mode on - applies the next time Live Karaoke starts."
+                        else "Instant mode on - applies the next time Live Karaoke starts."
+                }
+            },
+            LinearLayout.LayoutParams(
+                -1,
+                dp(54),
             ),
         )
 

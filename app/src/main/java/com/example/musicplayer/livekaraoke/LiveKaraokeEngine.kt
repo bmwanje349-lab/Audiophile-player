@@ -433,7 +433,12 @@ class LiveKaraokeEngine(
         val dryWet: Float = 1f,
         val stemGainDb: Float = 0f,
         val outputGainDb: Float = 0f,
-        val ceilingDb: Float = -1f,
+        val ceilingDb: Float = -0.5f,
+        /**
+         * false (default): instant strong spectral separator, plays immediately (truly live).
+         * true: MDX-Net neural separation (higher quality, but needs a multi-second start-up).
+         */
+        val preferNeural: Boolean = false,
     )
 
     private val appContext = context.applicationContext
@@ -492,7 +497,7 @@ class LiveKaraokeEngine(
                     uri = uri,
                     requestedPositionMs = positionMs.coerceAtLeast(0L),
                     settings = settings,
-                    forceDspFallback = false,
+                    forceDspFallback = !settings.preferNeural,
                 )
             session = next
             next.start()

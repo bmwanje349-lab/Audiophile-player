@@ -38,6 +38,9 @@ class LiveKaraokeService : Service() {
         const val EXTRA_STEM_GAIN = "live_karaoke_stem_gain"
         const val EXTRA_OUTPUT_GAIN = "live_karaoke_output_gain"
         const val EXTRA_CEILING = "live_karaoke_ceiling"
+        const val EXTRA_NEURAL = "live_karaoke_neural"
+        const val PREFS_NAME = "live_karaoke_prefs"
+        const val PREF_NEURAL = "neural"
         const val ACTION_STOP =
             "com.example.musicplayer.livekaraoke.STOP"
 
@@ -303,8 +306,15 @@ class LiveKaraokeService : Service() {
                         ceilingDb =
                             intent.getFloatExtra(
                                 EXTRA_CEILING,
-                                -1f,
+                                -0.5f,
                             ),
+                        preferNeural =
+                            if (intent.hasExtra(EXTRA_NEURAL)) {
+                                intent.getBooleanExtra(EXTRA_NEURAL, false)
+                            } else {
+                                getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                    .getBoolean(PREF_NEURAL, false)
+                            },
                     ),
             )
         }
