@@ -14,6 +14,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.example.audio.LoudnessProcessor
 import com.example.audio.LoudnessSettings
+import com.example.audio.FloatToPcm16Processor
 import com.example.audio.ToFloatProcessor
 import com.example.peq.PeqAudioProcessor
 import com.example.peq.PeqEngine
@@ -50,9 +51,9 @@ class PlaybackService : MediaSessionService() {
                 // DSP requires PCM processing. Offload is deliberately disabled.
                 return DefaultAudioSink.Builder(context)
                     // Float end-to-end: avoids 16-bit quantisation/clipping between DSP stages.
-                    .setEnableFloatOutput(true)
+                    .setEnableFloatOutput(false)
                     .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
-                    .setAudioProcessors(arrayOf(ToFloatProcessor(), peqProcessor, widenerProcessor, LoudnessProcessor()))
+                    .setAudioProcessors(arrayOf(ToFloatProcessor(), peqProcessor, widenerProcessor, LoudnessProcessor(), FloatToPcm16Processor()))
                     .build()
             }
         }
