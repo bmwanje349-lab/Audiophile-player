@@ -1,5 +1,6 @@
 package com.example.musicplayer
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
@@ -8,6 +9,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.util.concurrent.ListenableFuture
@@ -20,12 +22,20 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.PI
 import kotlin.math.sin
 import org.junit.Assert.assertTrue
+import org.junit.Rule
+import androidx.test.rule.GrantPermissionRule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @UnstableApi
 @RunWith(AndroidJUnit4::class)
 class PlaybackServiceAudioSmokeTest {
+    @get:Rule
+    val permissionRule: GrantPermissionRule = GrantPermissionRule.grant(
+        Manifest.permission.POST_NOTIFICATIONS,
+        Manifest.permission.READ_MEDIA_AUDIO,
+    )
+
     private val instrumentation
         get() = InstrumentationRegistry.getInstrumentation()
     private val context: Context
@@ -41,6 +51,9 @@ class PlaybackServiceAudioSmokeTest {
     fun selectedLocalTrackActuallyAdvancesThroughPlaybackService() {
         val wav = File(context.cacheDir, "playback-service-smoke.wav")
         writeToneWav(wav, sampleRate = 44_100, seconds = 3)
+        // Playback requests audio focus; keep the target application foregrounded as it is
+        // when a real user taps a song in the library.
+        val foregroundActivity = ActivityScenario.launch(MainActivity::class.java)
         val futureRef = AtomicReference<ListenableFuture<MediaController>?>(null)
         instrumentation.runOnMainSync {
             futureRef.set(
@@ -91,6 +104,7 @@ class PlaybackServiceAudioSmokeTest {
             )
         } finally {
             instrumentation.runOnMainSync { MediaController.releaseFuture(future) }
+            foregroundActivity.close()
             wav.delete()
         }
     }
