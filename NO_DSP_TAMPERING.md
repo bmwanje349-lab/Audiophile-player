@@ -1,11 +1,9 @@
-# DSP integrity check
+# DSP integrity record (updated for the loudness / widener / vocal-remover fix release)
 
-The premium vocal-removal DSP was not altered in the MDX replacement.
+These DSP files were intentionally modified (see CHANGES.md). Current SHA-256:
 
-Verified SHA-256:
+- `PremiumVocalRemoverDSP.h`: `f4dcb60f65ae284e1846c75cbc2f10fb871a2792d98ac856471a2f77dbd89e15`
+- `ProfessionalStereoWidenerDSP_v10.h`: `3acc99fda0df5426e1ad0cfbc10862b1fb8aa112a941f600ecab9663eb756e8e`
+- `native_vocal_remover.cpp`: unchanged (`416a52b1cdb0182b5b88a82e892b5014798f6f8483e43a6e6211d9c4a09dac0b`)
 
-- `PremiumVocalRemoverDSP.h`: `bb59b94169e974bd02dcd011228775862340b6ee07487790e01c3d6cb05c1cb7`
-- `native_vocal_remover.cpp`: `416a52b1cdb0182b5b88a82e892b5014798f6f8483e43a6e6211d9c4a09dac0b`
-- `ProfessionalStereoWidenerDSP_v10.h`: `46da8a0ace5e2e47153f0341bab5e521f9f0206c1138dba6e3df7672b987387b`
-
-The app's existing EQ and widener libraries are outside this package and must remain separate targets. The MDX backend does not replace or wrap them.
+The previous hashes (bb59b941..., 46da8a0a...) no longer apply.
