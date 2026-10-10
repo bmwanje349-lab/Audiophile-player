@@ -22,20 +22,12 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.PI
 import kotlin.math.sin
 import org.junit.Assert.assertTrue
-import org.junit.Rule
-import androidx.test.rule.GrantPermissionRule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @UnstableApi
 @RunWith(AndroidJUnit4::class)
 class PlaybackServiceAudioSmokeTest {
-    @get:Rule
-    val permissionRule: GrantPermissionRule = GrantPermissionRule.grant(
-        Manifest.permission.POST_NOTIFICATIONS,
-        Manifest.permission.READ_MEDIA_AUDIO,
-    )
-
     private val instrumentation
         get() = InstrumentationRegistry.getInstrumentation()
     private val context: Context
@@ -49,6 +41,15 @@ class PlaybackServiceAudioSmokeTest {
 
     @Test
     fun selectedLocalTrackActuallyAdvancesThroughPlaybackService() {
+        // Grant the app's declared runtime permissions before opening its Activity.
+        instrumentation.uiAutomation.grantRuntimePermission(
+            context.packageName,
+            Manifest.permission.POST_NOTIFICATIONS,
+        )
+        instrumentation.uiAutomation.grantRuntimePermission(
+            context.packageName,
+            Manifest.permission.READ_MEDIA_AUDIO,
+        )
         val wav = File(context.cacheDir, "playback-service-smoke.wav")
         writeToneWav(wav, sampleRate = 44_100, seconds = 3)
         // Playback requests audio focus; keep the target application foregrounded as it is
