@@ -1,5 +1,7 @@
 package com.example.musicplayer
 
+import com.example.audio.LoudnessSettings
+
 import android.content.Intent
 import android.graphics.Typeface
 import android.os.Bundle
@@ -334,8 +336,27 @@ class DspActivity : AppCompatActivity() {
             setOnCheckedChangeListener { _, on -> engine.enabled = on; saveDsp() }
         }, LinearLayout.LayoutParams(-1, dp(54)))
 
+        root.addView(sectionLabel("Loudness / Power"))
+        root.addView(SwitchMaterial(this).apply {
+            text = "Loudness stage (preamp + limiter)"
+            isChecked = LoudnessSettings.enabled
+            setTextColor(TEXT)
+            setOnCheckedChangeListener { _, on -> LoudnessSettings.enabled = on; LoudnessSettings.save(this@DspActivity) }
+        }, LinearLayout.LayoutParams(-1, dp(54)))
+        root.addView(bigSliderCard("Preamp", -12f, 12f, LoudnessSettings.preampDb, "${format(LoudnessSettings.preampDb)} dB") { LoudnessSettings.preampDb = it; LoudnessSettings.save(this) })
+        root.addView(SwitchMaterial(this).apply {
+            text = "Smart loudness (lift quiet songs)"
+            isChecked = LoudnessSettings.smartEnabled
+            setTextColor(TEXT)
+            setOnCheckedChangeListener { _, on -> LoudnessSettings.smartEnabled = on; LoudnessSettings.save(this@DspActivity) }
+        }, LinearLayout.LayoutParams(-1, dp(54)))
+        root.addView(featureSlider("Target loudness", -20f, -8f, LoudnessSettings.targetLufs, "${format(LoudnessSettings.targetLufs)} LUFS") { LoudnessSettings.targetLufs = it; LoudnessSettings.save(this) })
+        root.addView(featureSlider("Max boost", 0f, 15f, LoudnessSettings.maxBoostDb, "${format(LoudnessSettings.maxBoostDb)} dB") { LoudnessSettings.maxBoostDb = it; LoudnessSettings.save(this) })
+        root.addView(featureSlider("Final ceiling", -6f, 0f, LoudnessSettings.ceilingDb, "${format(LoudnessSettings.ceilingDb)} dB") { LoudnessSettings.ceilingDb = it; LoudnessSettings.save(this) })
+        root.addView(infoCard("How it works", "Songs are converted to 32-bit float, optionally lifted toward the target loudness, then passed through a look-ahead limiter that guarantees the ceiling is never exceeded - so you get a louder sound without clipping."))
+
         root.addView(sectionLabel("Core controls"))
-        root.addView(bigSliderCard("Width", 0f, 200f, engine.width * 100f, "${format(engine.width * 100f)}%") { engine.width = it / 100f; saveDsp() })
+        root.addView(bigSliderCard("Width", 0f, 250f, engine.width * 100f, "${format(engine.width * 100f)}%") { engine.width = it / 100f; saveDsp() })
         root.addView(bigSliderCard("Effect mix", 0f, 100f, engine.dryWet * 100f, "${format(engine.dryWet * 100f)}%") { engine.dryWet = it / 100f; saveDsp() })
 
         root.addView(sectionLabel("Bass protection"))
