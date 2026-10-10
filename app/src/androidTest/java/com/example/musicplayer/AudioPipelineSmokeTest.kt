@@ -5,6 +5,7 @@ import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.audio.FloatToPcm16Processor
+import com.example.audio.ImmersionProcessor
 import com.example.audio.LoudnessProcessor
 import com.example.audio.ToFloatProcessor
 import com.example.peq.PeqAudioProcessor
@@ -34,6 +35,7 @@ class AudioPipelineSmokeTest {
             ToFloatProcessor(),
             PeqAudioProcessor(peq),
             WidenerAudioProcessor(widener),
+            ImmersionProcessor(),
             LoudnessProcessor(),
             FloatToPcm16Processor(),
         )
