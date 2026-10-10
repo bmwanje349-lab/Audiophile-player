@@ -15,6 +15,7 @@ import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
+import com.example.audio.ImmersionSettings
 import com.example.audio.LoudnessSettings
 import com.example.peq.FilterType
 import com.example.peq.GraphicalEqController
@@ -334,6 +335,34 @@ class DspActivity : AppCompatActivity() {
             setTextColor(TEXT)
             setOnCheckedChangeListener { _, on -> engine.enabled = on; saveDsp() }
         }, LinearLayout.LayoutParams(-1, dp(54)))
+
+        root.addView(sectionLabel("Immersion (psychoacoustic)"))
+        root.addView(SwitchMaterial(this).apply {
+            text = "Enable Immersion"
+            isChecked = ImmersionSettings.enabled
+            setTextColor(TEXT)
+            setOnCheckedChangeListener { _, on ->
+                ImmersionSettings.enabled = on
+                ImmersionSettings.save(this@DspActivity)
+            }
+        }, LinearLayout.LayoutParams(-1, dp(54)))
+        root.addView(bigSliderCard("Space (natural width)", 0f, 100f, ImmersionSettings.space * 100f, "${format(ImmersionSettings.space * 100f)}%") {
+            ImmersionSettings.space = it / 100f
+            ImmersionSettings.save(this)
+        })
+        root.addView(bigSliderCard("Ambience (depth)", 0f, 100f, ImmersionSettings.ambience * 100f, "${format(ImmersionSettings.ambience * 100f)}%") {
+            ImmersionSettings.ambience = it / 100f
+            ImmersionSettings.save(this)
+        })
+        root.addView(bigSliderCard("Air (sparkle)", 0f, 100f, ImmersionSettings.air * 100f, "${format(ImmersionSettings.air * 100f)}%") {
+            ImmersionSettings.air = it / 100f
+            ImmersionSettings.save(this)
+        })
+        root.addView(bigSliderCard("Bass depth", 0f, 100f, ImmersionSettings.bass * 100f, "${format(ImmersionSettings.bass * 100f)}%") {
+            ImmersionSettings.bass = it / 100f
+            ImmersionSettings.save(this)
+        })
+        root.addView(infoCard("Immersion", "Adds restrained high-frequency width, a short damped room cue, harmonic air, and bass harmonics. Keep changes modest and compare enabled/disabled at matched loudness."))
 
         root.addView(sectionLabel("Loudness / Power"))
         root.addView(SwitchMaterial(this).apply {
