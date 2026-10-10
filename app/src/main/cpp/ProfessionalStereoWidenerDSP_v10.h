@@ -632,54 +632,56 @@ private:
 
 class SideHaas {
 public:
-    static constexpr std::size_t kMaxDelaySamples = 512;
+    // 4096 samples support a 20 ms delay up to 192 kHz with interpolation headroom.
+    static constexpr std::size_t kMaxDelaySamples = 4096;
+    static constexpr float kMaxSideInjection = 0.35f;
+    static constexpr float kMaxDelayMs = 20.0f;
 
     void prepare(double sampleRate) noexcept {
         fs_ = static_cast<float>(std::max(1.0, sampleRate));
-        delaySmoothA_ = std::exp(-1.0f / (0.008f * fs_));
-        mixSmoothA_ = std::exp(-1.0f / (0.008f * fs_));
         reset();
     }
 
     void reset() noexcept {
         write_ = 0;
-        delaySamples_ = 0.0f;
         targetDelaySamples_ = 0.0f;
-        mixCurrent_ = 0.0f;
         mixTarget_ = 0.0f;
         buffer_.fill(0.0f);
     }
 
+    // The owning engine already smooths the controls per sample. Do not apply
+    // a second smoother here: it made the actual delay lag the UI controls.
     void setDelayMs(float ms) noexcept {
-        const float maxMs =
-            1000.0f * static_cast<float>(kMaxDelaySamples - 2) / fs_;
         targetDelaySamples_ =
-            clampf(ms, 0.0f, maxMs) * 0.001f * fs_;
+            clampf(ms, 0.0f, kMaxDelayMs) * 0.001f * fs_;
+        targetDelaySamples_ = clampf(
+            targetDelaySamples_,
+            0.0f,
+            static_cast<float>(kMaxDelaySamples - 2));
     }
 
     void setMix(float mix) noexcept {
         mixTarget_ = clampf(mix, 0.0f, 1.0f);
     }
 
-    float process(float side) noexcept {
-        delaySamples_ =
-            targetDelaySamples_ +
-            delaySmoothA_ * (delaySamples_ - targetDelaySamples_);
-
-        mixCurrent_ =
-            mixTarget_ +
-            mixSmoothA_ * (mixCurrent_ - mixTarget_);
-
-        buffer_[write_] = side;
+    /*
+        Add a delayed, band-limited mid feed to the side field. The previous
+        implementation delayed only the existing side signal; for mono and
+        center-heavy material that signal is zero/small, so Haas settings
+        appeared to do nothing. Injecting a controlled amount of delayed mid
+        creates a clear inter-channel time cue while preserving the original
+        mid signal and its mono sum. A zero delay explicitly contributes zero.
+    */
+    float process(float side, float midFeed) noexcept {
+        buffer_[write_] = safeSample(midFeed);
 
         const float d = clampf(
-            delaySamples_,
+            targetDelaySamples_,
             0.0f,
             static_cast<float>(kMaxDelaySamples - 2));
 
-        float delayed = side;
-
-        if (d > 1.0e-7f) {
+        float delayed = 0.0f;
+        if (d > 0.5f) {
             float readPos = static_cast<float>(write_) - d;
             while (readPos < 0.0f)
                 readPos += static_cast<float>(kMaxDelaySamples);
@@ -696,18 +698,15 @@ public:
         if (write_ >= kMaxDelaySamples)
             write_ = 0;
 
-        return side + mixCurrent_ * (delayed - side);
+        const float sideCue = kMaxSideInjection * mixTarget_ * delayed;
+        return safeSample(side + sideCue);
     }
 
 private:
     float fs_ = 48000.0f;
-    float delaySmoothA_ = 0.99f;
-    float mixSmoothA_ = 0.99f;
     std::array<float, kMaxDelaySamples> buffer_{};
     std::size_t write_ = 0;
-    float delaySamples_ = 0.0f;
     float targetDelaySamples_ = 0.0f;
-    float mixCurrent_ = 0.0f;
     float mixTarget_ = 0.0f;
 };
 
@@ -2365,6 +2364,7 @@ public:
         highDiffuser_.prepare(fs_, 1100.0f, 1.39f, 0.78f);
 
         haas_.prepare(fs_);
+        haasSourceHP_.prepare(fs_, 140.0f, LR4Filter::Type::HighPass);
         transient_.prepare(fs_);
 
         limiter_.prepare(fs_);
@@ -2395,6 +2395,7 @@ public:
         midDiffuser_.reset();
         highDiffuser_.reset();
         haas_.reset();
+        haasSourceHP_.reset();
         transient_.reset();
         limiter_.reset();
 
@@ -2440,7 +2441,7 @@ public:
     }
 
     void setHaasDelayMs(float ms) noexcept {
-        haasDelayTarget_.store(clampf(ms, 0.0f, 10.0f),
+        haasDelayTarget_.store(clampf(ms, 0.0f, 20.0f),
                                std::memory_order_relaxed);
     }
 
@@ -2621,9 +2622,13 @@ public:
         const float outM = mL + mM + mH;
         float outS = outSL + outSM + outSH;
 
+        // The source is high-passed so the Haas contribution cannot pull
+        // sub-bass away from the center. It is added to S, not substituted
+        // for existing side content, so existing stereo information remains.
+        const float haasSource = haasSourceHP_.process(outM);
         haas_.setDelayMs(haasMs);
         haas_.setMix(haasMix);
-        outS = haas_.process(outS);
+        outS = haas_.process(outS, haasSource);
 
         float wetL = outM + outS;
         float wetR = outM - outS;
@@ -2823,6 +2828,7 @@ private:
     SideDiffuser<8> midDiffuser_;
     SideDiffuser<12> highDiffuser_;
     SideHaas haas_;
+    LR4Filter haasSourceHP_;
     StereoTransientDetector transient_;
     StereoLinkedTruePeakLimiter limiter_;
 

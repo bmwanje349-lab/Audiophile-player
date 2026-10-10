@@ -83,7 +83,7 @@ class WidenerEngine : AutoCloseable {
 
     var haasDelayMs: Float = 0f
         set(value) {
-            field = value.coerceIn(0f, 10f)
+            field = value.coerceIn(0f, 20f)
             if (handle != 0L) WidenerNative.setHaasDelayMs(handle, field)
         }
 

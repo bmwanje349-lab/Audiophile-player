@@ -394,8 +394,9 @@ class DspActivity : AppCompatActivity() {
         root.addView(sectionLabel("Advanced"))
         root.addView(featureSlider("Low crossover", 40f, 400f, engine.lowCrossoverHz, "${format(engine.lowCrossoverHz)} Hz") { engine.lowCrossoverHz = it; saveDsp() })
         root.addView(featureSlider("High crossover", 1000f, 10000f, engine.highCrossoverHz, "${format(engine.highCrossoverHz)} Hz") { engine.highCrossoverHz = it; saveDsp() })
-        root.addView(featureSlider("Haas delay", 0f, 10f, engine.haasDelayMs, "${format(engine.haasDelayMs)} ms") { engine.haasDelayMs = it; saveDsp() })
+        root.addView(featureSlider("Haas delay", 0f, 20f, engine.haasDelayMs, "${format(engine.haasDelayMs)} ms") { engine.haasDelayMs = it; saveDsp() })
         root.addView(featureSlider("Haas mix", 0f, 100f, engine.haasMix * 100f, "${format(engine.haasMix * 100f)}%") { engine.haasMix = it / 100f; saveDsp() })
+        root.addView(infoCard("Haas spatial cue", "Adds a short, high-passed delayed feed from centered audio into the stereo side field. Start around 8–12 ms and 25–50% mix for a restrained effect; low bass and the original center signal are preserved."))
         root.addView(featureSlider("Output gain", -12f, 6f, engine.outputGainDb, "${format(engine.outputGainDb)} dB") { engine.outputGainDb = it; saveDsp() })
         root.addView(featureSlider("Limiter ceiling", -12f, 0f, engine.outputCeilingDb, "${format(engine.outputCeilingDb)} dB") { engine.outputCeilingDb = it; saveDsp() })
         root.addView(SwitchMaterial(this).apply {
