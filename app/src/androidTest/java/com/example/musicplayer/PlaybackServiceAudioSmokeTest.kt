@@ -10,11 +10,13 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.google.common.util.concurrent.ListenableFuture
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.PI
 import kotlin.math.sin
 import org.junit.Assert.assertTrue
@@ -24,39 +26,71 @@ import org.junit.runner.RunWith
 @UnstableApi
 @RunWith(AndroidJUnit4::class)
 class PlaybackServiceAudioSmokeTest {
+    private val instrumentation
+        get() = InstrumentationRegistry.getInstrumentation()
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = instrumentation.targetContext
+
+    private data class PlaybackSnapshot(
+        val positionMs: Long,
+        val state: Int,
+        val error: String?,
+    )
 
     @Test
     fun selectedLocalTrackActuallyAdvancesThroughPlaybackService() {
         val wav = File(context.cacheDir, "playback-service-smoke.wav")
         writeToneWav(wav, sampleRate = 44_100, seconds = 3)
-        val future = MediaController.Builder(
-            context,
-            SessionToken(context, ComponentName(context, PlaybackService::class.java)),
-        ).buildAsync()
+        val futureRef = AtomicReference<ListenableFuture<MediaController>?>(null)
+        instrumentation.runOnMainSync {
+            futureRef.set(
+                MediaController.Builder(
+                    context,
+                    SessionToken(context, ComponentName(context, PlaybackService::class.java)),
+                ).buildAsync(),
+            )
+        }
+        val future = checkNotNull(futureRef.get())
 
         try {
             val controller = future.get(20, TimeUnit.SECONDS)
-            controller.setMediaItem(MediaItem.fromUri(Uri.fromFile(wav)))
-            controller.prepare()
-            controller.play()
+            // MediaController methods must be called on the Looper where it was created (main).
+            instrumentation.runOnMainSync {
+                controller.setMediaItem(MediaItem.fromUri(Uri.fromFile(wav)))
+                controller.prepare()
+                controller.play()
+            }
 
             val deadline = SystemClock.elapsedRealtime() + 12_000L
             var furthestPositionMs = 0L
+            var lastState = -1
+            var lastError: String? = null
             while (SystemClock.elapsedRealtime() < deadline && furthestPositionMs < 500L) {
-                controller.playerError?.let { error ->
-                    throw AssertionError("Media3 reported a playback error: ${error.message}", error)
+                val snapshotRef = AtomicReference<PlaybackSnapshot?>(null)
+                instrumentation.runOnMainSync {
+                    snapshotRef.set(
+                        PlaybackSnapshot(
+                            positionMs = controller.currentPosition,
+                            state = controller.playbackState,
+                            error = controller.playerError?.message,
+                        ),
+                    )
                 }
-                furthestPositionMs = maxOf(furthestPositionMs, controller.currentPosition)
-                SystemClock.sleep(100L)
+                val snapshot = checkNotNull(snapshotRef.get())
+                lastState = snapshot.state
+                lastError = snapshot.error
+                snapshot.error?.let { error ->
+                    throw AssertionError("Media3 reported a playback error: $error")
+                }
+                furthestPositionMs = maxOf(furthestPositionMs, snapshot.positionMs)
+                if (furthestPositionMs < 500L) SystemClock.sleep(100L)
             }
             assertTrue(
-                "Selected WAV never advanced through the playback service; state=${controller.playbackState}, error=${controller.playerError}",
+                "Selected WAV never advanced through the playback service; state=$lastState, error=$lastError, furthestPositionMs=$furthestPositionMs",
                 furthestPositionMs >= 500L,
             )
         } finally {
-            MediaController.releaseFuture(future)
+            instrumentation.runOnMainSync { MediaController.releaseFuture(future) }
             wav.delete()
         }
     }
