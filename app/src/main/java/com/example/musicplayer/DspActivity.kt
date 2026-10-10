@@ -362,7 +362,7 @@ class DspActivity : AppCompatActivity() {
             ImmersionSettings.bass = it / 100f
             ImmersionSettings.save(this)
         })
-        root.addView(infoCard("Immersion", "Adds restrained high-frequency width, a short damped room cue, harmonic air, and bass harmonics. Keep changes modest and compare enabled/disabled at matched loudness."))
+        root.addView(infoCard("Immersion", "Adds controlled stereo width, early reflections with a damped room tail, gentle high-frequency air, and restrained bass harmonics. The direct sound stays dominant; compare enabled/disabled at matched loudness."))
 
         root.addView(sectionLabel("Loudness / Power"))
         root.addView(SwitchMaterial(this).apply {
