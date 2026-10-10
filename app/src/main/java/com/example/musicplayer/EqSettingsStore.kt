@@ -50,11 +50,24 @@ class EqSettingsStore(context: Context) {
             .apply()
     }
 
+    /** One-time migration: earlier builds stored -1 dB ceilings (+0.25 dB widener margin) that cost loudness. */
+    private fun migrateCeilings() {
+        if (prefs.getBoolean("ceil_migrated_v2", false)) return
+        prefs.edit()
+            .putFloat(KEY_PEQ_CEILING, -0.3f)
+            .putFloat(KEY_PEQ_SAFETY, 0.05f)
+            .putFloat(KEY_W_CEILING, -0.3f)
+            .putFloat(KEY_W_SAFETY, 0.05f)
+            .putBoolean("ceil_migrated_v2", true)
+            .apply()
+    }
+
     fun applyPeq(peq: PeqEngine) {
+        migrateCeilings()
         peq.peqEnabled = prefs.getBoolean(KEY_PEQ_ENABLED, true)
         peq.limiterEnabled = prefs.getBoolean(KEY_PEQ_LIMITER, true)
-        peq.limiterCeilingDb = prefs.getFloat(KEY_PEQ_CEILING, -1f)
-        peq.limiterSafetyDb = prefs.getFloat(KEY_PEQ_SAFETY, 0.10f)
+        peq.limiterCeilingDb = prefs.getFloat(KEY_PEQ_CEILING, -0.3f)
+        peq.limiterSafetyDb = prefs.getFloat(KEY_PEQ_SAFETY, 0.05f)
         peq.autoGainEnabled = prefs.getBoolean(KEY_PEQ_AUTO, false)
         peq.autoGainAmount = prefs.getFloat(KEY_PEQ_AUTO_AMOUNT, 1f)
         peq.linearPhaseTaps = prefs.getInt(KEY_PEQ_TAPS, 513)
@@ -95,6 +108,7 @@ class EqSettingsStore(context: Context) {
     }
 
     fun applyWidener(w: WidenerEngine) {
+        migrateCeilings()
         w.enabled = prefs.getBoolean(KEY_W_ENABLED, true)
         w.width = prefs.getFloat(KEY_W_WIDTH, 1f)
         w.lowCrossoverHz = prefs.getFloat(KEY_W_LOW, 180f)
@@ -104,21 +118,18 @@ class EqSettingsStore(context: Context) {
         w.haasMix = prefs.getFloat(KEY_W_HAAS_MIX, 0f)
         w.dryWet = prefs.getFloat(KEY_W_DRY_WET, 1f)
         w.outputGainDb = prefs.getFloat(KEY_W_OUTPUT_GAIN, 0f)
-        w.outputCeilingDb = prefs.getFloat(KEY_W_CEILING, -1f)
-        w.limiterSafetyMarginDb = prefs.getFloat(KEY_W_SAFETY, 0.25f)
+        w.outputCeilingDb = prefs.getFloat(KEY_W_CEILING, -0.3f)
+        w.limiterSafetyMarginDb = prefs.getFloat(KEY_W_SAFETY, 0.05f)
         w.autoLevel = prefs.getBoolean(KEY_W_AUTO, true)
     }
 
     fun applyTo(peq: PeqEngine, widener: WidenerEngine) {
         applyPeq(peq)
-
-        // Graphic EQ state is applied in one native batch.
         val gains = loadGraphicGains()
         com.example.peq.GraphicalEqController(peq).apply {
             setAll(gains)
             enabled = loadGraphicEnabled()
         }
-
         applyWidener(widener)
     }
 
