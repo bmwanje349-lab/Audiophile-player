@@ -696,15 +696,7 @@ public:
         if (write_ >= kMaxDelaySamples)
             write_ = 0;
 
-        /*
-            Keep the direct side signal and add a controlled delayed reflection.
-            The previous crossfade (side -> delayed) could sound almost unchanged
-            because it replaced the original side rather than adding a distinct
-            arrival. Divide by 1 + mix so a zero-delay tap remains exactly unity
-            and the blend does not create an uncontrolled level increase.
-        */
-        const float mix = clampf(mixCurrent_, 0.0f, 1.0f);
-        return (side + mix * delayed) / (1.0f + mix);
+        return side + mixCurrent_ * (delayed - side);
     }
 
 private:
