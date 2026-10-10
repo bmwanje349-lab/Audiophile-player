@@ -2595,24 +2595,27 @@ public:
                 side field.
             */
             /*
-                FIX: the original diffused only the SIDE signal, so material
-                that is (near) mono - most vocals/instruments - had nothing
-                to widen and the control did almost nothing above 100%.
-                Now the MID band is decorrelated (all-pass chain) and
-                injected into the side field.  Because it lands in S it
-                cancels exactly in mono, so mono compatibility is unchanged,
-                while L/R become clearly decorrelated.  Existing side
-                content is additionally boosted.
+                Natural widening (revised after listening feedback: the
+                previous version spread the whole vocal/instrument body
+                through all-pass chains and sounded hollow and phasey).
+
+                - The centre image (mid below the high band) is never moved:
+                  vocals, snare and kick stay anchored.
+                - Existing side content is lifted gently, more in the highs
+                  than in the low-mids, like a genuinely wider recording.
+                - Only the HIGH band gets a small amount of decorrelated
+                  mid injected, which reads as "air" rather than as phase.
+                - Everything is injected into S, so the mono sum is unchanged.
             */
             const float dM = midDiffuser_.process(mM);
             const float dH = highDiffuser_.process(mH);
             const float g = 0.35f + 0.65f * transientSafe;
 
             outSL = sL;
-            outSM = sM * (1.0f + 0.60f * added * g)
-                  + added * 1.00f * g * dM;
-            outSH = sH * (1.0f + 0.60f * added * g)
-                  + added * 1.15f * g * dH;
+            outSM = sM * (1.0f + 0.35f * added * g)
+                  + added * 0.08f * g * dM;
+            outSH = sH * (1.0f + 0.55f * added * g)
+                  + added * 0.30f * g * dH;
         }
 
         const float outM = mL + mM + mH;
