@@ -1859,9 +1859,23 @@ public:
         */
         (void)ceilingDb_.process();
 
+        /*
+            FIX (loudness): the original code passed the absolute minimum
+            permitted ceiling (-15 dB) here, i.e. it assumed the user could
+            drop the ceiling to its floor at ANY moment.  With the 5 ms
+            ceiling smoother and a ~123-sample horizon that pulled the
+            protected ceiling down to roughly -6.4 dBFS even when the user
+            asked for 0 dBFS, so every signal above about -9 dBFS was
+            squashed by 2-8 dB (measured: a 0.9 amplitude sine came out
+            7.4 dB low with ceiling 0 dB / safety 0 dB).
+
+            The recurrence is monotonic towards its CURRENT target, so the
+            lowest value it can reach inside the protection horizon is given
+            by the lower of the current value and the current target.
+        */
         const float futureSafeCeilingDb =
             ceilingDb_.futureLowerBound(
-                kMinimumEffectiveCeilingDb,
+                std::min(ceilingDb_.target(), ceilingDb_.current()),
                 ceilingControlHorizon_);
 
         const float effectiveFutureSafeCeilingGain =
@@ -2580,14 +2594,25 @@ public:
                 created by injecting decorrelated MID/HIGH material into the
                 side field.
             */
-            const float dM = midDiffuser_.process(sM);
-            const float dH = highDiffuser_.process(sH);
+            /*
+                FIX: the original diffused only the SIDE signal, so material
+                that is (near) mono - most vocals/instruments - had nothing
+                to widen and the control did almost nothing above 100%.
+                Now the MID band is decorrelated (all-pass chain) and
+                injected into the side field.  Because it lands in S it
+                cancels exactly in mono, so mono compatibility is unchanged,
+                while L/R become clearly decorrelated.  Existing side
+                content is additionally boosted.
+            */
+            const float dM = midDiffuser_.process(mM);
+            const float dH = highDiffuser_.process(mH);
+            const float g = 0.35f + 0.65f * transientSafe;
 
             outSL = sL;
-            outSM =
-                sM + added * bandExpansion(1, transientSafe) * dM;
-            outSH =
-                sH + added * bandExpansion(2, transientSafe) * dH;
+            outSM = sM * (1.0f + 0.60f * added * g)
+                  + added * 1.00f * g * dM;
+            outSH = sH * (1.0f + 0.60f * added * g)
+                  + added * 1.15f * g * dH;
         }
 
         const float outM = mL + mM + mH;
@@ -2756,8 +2781,8 @@ private:
 
         autoGain_.setTarget(
             clampf(ratio,
-                   dbToGain(-1.5f),
-                   dbToGain(1.5f)));
+                   dbToGain(-2.0f),
+                   dbToGain(1.0f)));
     }
 
     float fs_ = 48000.0f;
