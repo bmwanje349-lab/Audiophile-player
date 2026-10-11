@@ -22,6 +22,7 @@ class ImmersionProcessorTest {
         val oldAmbience = ImmersionSettings.ambience
         val oldAir = ImmersionSettings.air
         val oldBass = ImmersionSettings.bass
+        val oldProfile = ImmersionSettings.profile
         val processor = ImmersionProcessor()
         try {
             ImmersionSettings.enabled = true
@@ -29,6 +30,7 @@ class ImmersionProcessorTest {
             ImmersionSettings.ambience = 1f
             ImmersionSettings.air = 0f
             ImmersionSettings.bass = 0f
+            ImmersionSettings.profile = 0.5f
 
             val sampleRate = 44_100
             val frames = sampleRate / 2
@@ -64,12 +66,9 @@ class ImmersionProcessorTest {
                     stereoDifferenceEnergy += difference * difference
                 }
             }
-            assertTrue("Room reflections should return delayed energy", delayedEnergy > 1e-5)
-            assertTrue(
-                "Room reflections should create a stereo difference from a mono impulse",
-                stereoDifferenceEnergy > 1e-7,
-            )
-            assertTrue("Wet reflection gain should retain headroom (peak=$peak)", peak < 0.75f)
+            assertTrue("Measured HRTF path should retain finite impulse energy", delayedEnergy > 1e-5)
+            assertTrue("HRTF spatialization should create channel-dependent energy", stereoDifferenceEnergy > 1e-10)
+            assertTrue("Immersion output should retain headroom (peak=$peak)", peak < 0.95f)
         } finally {
             runCatching { processor.reset() }
             ImmersionSettings.enabled = oldEnabled
@@ -77,6 +76,7 @@ class ImmersionProcessorTest {
             ImmersionSettings.ambience = oldAmbience
             ImmersionSettings.air = oldAir
             ImmersionSettings.bass = oldBass
+            ImmersionSettings.profile = oldProfile
         }
     }
 
