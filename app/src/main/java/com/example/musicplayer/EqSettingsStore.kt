@@ -4,7 +4,6 @@ import android.content.Context
 import com.example.peq.FilterType
 import com.example.peq.PeqBand
 import com.example.peq.PeqEngine
-import com.example.peq.WidenerEngine
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -56,8 +55,6 @@ class EqSettingsStore(context: Context) {
         prefs.edit()
             .putFloat(KEY_PEQ_CEILING, -0.3f)
             .putFloat(KEY_PEQ_SAFETY, 0.05f)
-            .putFloat(KEY_W_CEILING, -0.3f)
-            .putFloat(KEY_W_SAFETY, 0.05f)
             .putBoolean("ceil_migrated_v2", true)
             .apply()
     }
@@ -92,48 +89,13 @@ class EqSettingsStore(context: Context) {
 
     fun saveWidener(w: WidenerEngine) {
         prefs.edit()
-            .putBoolean(KEY_W_ENABLED, w.enabled)
-            .putFloat(KEY_W_WIDTH, w.width)
-            .putFloat(KEY_W_LOW, w.lowCrossoverHz)
-            .putFloat(KEY_W_HIGH, w.highCrossoverHz)
-            .putFloat(KEY_W_BASS, w.bassMonoFrequencyHz)
-            .putFloat(KEY_W_HAAS_DELAY, w.haasDelayMs)
-            .putFloat(KEY_W_HAAS_MIX, w.haasMix)
-            .putFloat(KEY_W_DRY_WET, w.dryWet)
-            .putFloat(KEY_W_OUTPUT_GAIN, w.outputGainDb)
-            .putFloat(KEY_W_CEILING, w.outputCeilingDb)
-            .putFloat(KEY_W_SAFETY, w.limiterSafetyMarginDb)
-            .putBoolean(KEY_W_AUTO, w.autoLevel)
-            .apply()
-    }
-
-    fun applyWidener(w: WidenerEngine) {
-        migrateCeilings()
-        w.enabled = prefs.getBoolean(KEY_W_ENABLED, true)
-        w.width = prefs.getFloat(KEY_W_WIDTH, 1f)
-        w.lowCrossoverHz = prefs.getFloat(KEY_W_LOW, 180f)
-        w.highCrossoverHz = prefs.getFloat(KEY_W_HIGH, 3200f)
-        w.bassMonoFrequencyHz = prefs.getFloat(KEY_W_BASS, 80f)
-        w.haasDelayMs = prefs.getFloat(KEY_W_HAAS_DELAY, 0f)
-        w.haasMix = prefs.getFloat(KEY_W_HAAS_MIX, 0f)
-        w.dryWet = prefs.getFloat(KEY_W_DRY_WET, 1f)
-        w.outputGainDb = prefs.getFloat(KEY_W_OUTPUT_GAIN, 0f)
-        w.outputCeilingDb = prefs.getFloat(KEY_W_CEILING, -0.3f)
-        w.limiterSafetyMarginDb = prefs.getFloat(KEY_W_SAFETY, 0.05f)
-        w.autoLevel = prefs.getBoolean(KEY_W_AUTO, true)
-    }
-
-    fun applyTo(peq: PeqEngine, widener: WidenerEngine) {
+            .putBoolean(KE    fun applyTo(peq: PeqEngine) {
         applyPeq(peq)
-
-        // Graphic EQ state is applied in one native batch.
         val gains = loadGraphicGains()
         com.example.peq.GraphicalEqController(peq).apply {
             setAll(gains)
             enabled = loadGraphicEnabled()
         }
-
-        applyWidener(widener)
     }
 
     companion object {
@@ -149,17 +111,11 @@ class EqSettingsStore(context: Context) {
         private const val KEY_PEQ_LINEAR = "peq_linear"
         private const val KEY_PEQ_TAPS = "peq_taps"
 
-        private const val KEY_W_ENABLED = "w_enabled"
         private const val KEY_W_WIDTH = "w_width"
-        private const val KEY_W_LOW = "w_low"
         private const val KEY_W_HIGH = "w_high"
-        private const val KEY_W_BASS = "w_bass"
         private const val KEY_W_HAAS_DELAY = "w_haas_delay"
-        private const val KEY_W_HAAS_MIX = "w_haas_mix"
         private const val KEY_W_DRY_WET = "w_dry_wet"
-        private const val KEY_W_OUTPUT_GAIN = "w_output_gain"
         private const val KEY_W_CEILING = "w_ceiling"
-        private const val KEY_W_SAFETY = "w_safety"
         private const val KEY_W_AUTO = "w_auto"
     }
 }
