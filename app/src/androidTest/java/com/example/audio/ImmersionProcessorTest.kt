@@ -87,6 +87,7 @@ class ImmersionProcessorTest {
         val oldAmbience = ImmersionSettings.ambience
         val oldAir = ImmersionSettings.air
         val oldBass = ImmersionSettings.bass
+        val oldProfile = ImmersionSettings.profile
         val processor = ImmersionProcessor()
         try {
             ImmersionSettings.enabled = false
@@ -136,6 +137,7 @@ class ImmersionProcessorTest {
             ImmersionSettings.ambience = oldAmbience
             ImmersionSettings.air = oldAir
             ImmersionSettings.bass = oldBass
+            ImmersionSettings.profile = oldProfile
         }
     }
 }
