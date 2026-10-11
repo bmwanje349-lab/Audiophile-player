@@ -37,6 +37,20 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/widener_jni.cpp")
 endif()
 
 
+ 
+# Native measured-HRTF immersion processor. Keep the independent stereo widener
+# and PEQ targets above; this replaces only the older Kotlin immersion DSP.
+add_library(audiophile_immersion SHARED
+    ImmersionEngine.cpp
+    ImmersionNative.cpp
+)
+target_compile_features(audiophile_immersion PRIVATE cxx_std_17)
+target_compile_options(audiophile_immersion PRIVATE -O3 -Wall -Wextra -Wpedantic -fno-fast-math)
+target_link_options(audiophile_immersion PRIVATE "-Wl,-z,max-page-size=16384")
+target_include_directories(audiophile_immersion PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(audiophile_immersion PRIVATE ${log-lib})
+
+
 # PremiumVocalRemoverDSP.h #includes this header (SmoothedValue,
 # StereoTransientDetector, StereoLinkedTruePeakLimiter, clampf, dbToGain, ...).
 # It lives in the full repo's app/src/main/cpp and is not in this bundle.

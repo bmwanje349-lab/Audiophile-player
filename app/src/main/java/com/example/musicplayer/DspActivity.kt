@@ -362,7 +362,11 @@ class DspActivity : AppCompatActivity() {
             ImmersionSettings.bass = it / 100f
             ImmersionSettings.save(this)
         })
-        root.addView(infoCard("Immersion", "Adds restrained high-frequency width, a short damped room cue, harmonic air, and bass harmonics. Keep changes modest and compare enabled/disabled at matched loudness."))
+        root.addView(bigSliderCard("HRTF profile (D1 ↔ H10)", 0f, 100f, ImmersionSettings.profile * 100f, "${format(ImmersionSettings.profile * 100f)}%") {
+            ImmersionSettings.profile = it / 100f
+            ImmersionSettings.save(this)
+        })
+        root.addView(infoCard("Measured-HRTF immersion", "Uses measured SADIE II D1/H10 head-related impulse responses for binaural spatial cues. Space controls virtual-speaker angle and wet blend; Ambience adds early reflections; Air and Bass are optional tone-shaping stages. Start low and compare at matched loudness."))
 
         root.addView(sectionLabel("Loudness / Power"))
         root.addView(SwitchMaterial(this).apply {
@@ -432,8 +436,10 @@ class DspActivity : AppCompatActivity() {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
                     val v = min + (max - min) * (p / 1000f)
                     valueView.text = format(v) + when {
-                        label == "Width" -> "%"
-                        label.contains("mix", true) -> "%"
+                        label == "Width" || label == "Preamp" -> if (label == "Width") "%" else " dB"
+                        label.contains("mix", true) || label.contains("space", true) ||
+                            label.contains("ambience", true) || label.contains("air", true) ||
+                            label.contains("bass depth", true) || label.contains("profile", true) -> "%"
                         label.contains("delay", true) -> " ms"
                         label.contains("gain", true) || label.contains("ceiling", true) -> " dB"
                         else -> " Hz"

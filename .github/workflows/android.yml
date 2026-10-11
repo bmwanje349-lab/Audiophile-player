@@ -113,6 +113,16 @@ jobs:
             -o /tmp/audiophile-widener-host-test
           /tmp/audiophile-widener-host-test
 
+      - name: Run measured-HRTF immersion native regression test
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -fno-fast-math \
+            -Iapp/src/main/cpp \
+            host_tests/immersion_host_test.cpp \
+            app/src/main/cpp/ImmersionEngine.cpp \
+            -o /tmp/audiophile-immersion-host-test
+          /tmp/audiophile-immersion-host-test
+
       - name: Run JVM streaming regression tests
         run: |
           set -euo pipefail
@@ -158,6 +168,7 @@ jobs:
                   assert f"lib/{abi}/libaudiophile_vocal_remover.so" in names, f"vocal JNI missing for {abi}"
                   assert f"lib/{abi}/libpeq.so" in names, f"PEQ JNI missing for {abi}"
                   assert f"lib/{abi}/libwidener.so" in names, f"Widener JNI missing for {abi}"
+                  assert f"lib/{abi}/libaudiophile_immersion.so" in names, f"Measured-HRTF immersion JNI missing for {abi}"
                   assert f"lib/{abi}/libonnxruntime.so" in names or any(
                       n.startswith(f"lib/{abi}/") and "onnxruntime" in n for n in names
                   ), f"ONNX Runtime native library missing for {abi}"
