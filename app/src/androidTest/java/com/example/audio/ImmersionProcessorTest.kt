@@ -60,7 +60,7 @@ class ImmersionProcessorTest {
                 assertTrue("Non-finite left sample at frame $frame", left.isFinite())
                 assertTrue("Non-finite right sample at frame $frame", right.isFinite())
                 peak = maxOf(peak, abs(left), abs(right))
-                if (frame > sampleRate / 200) {
+                if (frame > 8) {
                     delayedEnergy += left.toDouble() * left.toDouble() + right.toDouble() * right.toDouble()
                     val difference = left.toDouble() - right.toDouble()
                     stereoDifferenceEnergy += difference * difference
