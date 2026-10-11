@@ -235,8 +235,10 @@ private:
 
     void updateCoefs() noexcept {
         const float fs = static_cast<float>(fs_);
-        constexpr float tau = 6.28318530718f;
-        const auto lp = [fs](float hz) { return 1.0f - std::exp(-tau * hz / fs); };
+        const auto lp = [fs](float hz) {
+            constexpr float tau = 6.28318530718f;
+            return 1.0f - std::exp(-tau * hz / fs);
+        };
         cSide_ = lp(250.0f);
         cAir_ = lp(4500.0f);
         cBass_ = lp(130.0f);
