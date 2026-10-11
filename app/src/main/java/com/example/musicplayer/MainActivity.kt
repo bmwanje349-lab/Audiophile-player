@@ -310,7 +310,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(sectionLabel("Sound engine"))
         root.addView(infoCard(
             "Midnight Audiophile",
-            "Graphic EQ, 16-band Parametric EQ and the professional v10 Stereo Widener stay separate in the Sound section."
+            "Graphic EQ, 16-band Parametric EQ and the measured-HRTF Immersion Engine stay separate in the Sound section."
         ))
 
         scroll.addView(root)
@@ -576,7 +576,7 @@ class MainActivity : AppCompatActivity() {
 
     root.addView(
         soundCard(
-            "Stereo Widener",
+            "Immersion Engine",
             "Professional spatial processing",
             "Width  •  bass protection  •  depth",
             "stereo"
@@ -600,7 +600,7 @@ class MainActivity : AppCompatActivity() {
     root.addView(
         infoCard(
             "Processing order",
-            "Graphic EQ  →  Parametric EQ  →  makeup gain  →  v10 Stereo Widener  →  final output path"
+            "Graphic EQ  →  Parametric EQ  →  measured-HRTF Immersion Engine  →  final output path"
         )
     )
 
@@ -690,8 +690,8 @@ class MainActivity : AppCompatActivity() {
         )))
 
         root.addView(settingsGroup("DSP", listOf(
-            settingRow("Sound controls", "Graphic EQ, Parametric EQ and Stereo Widener", android.R.drawable.ic_menu_manage) { bottomNav.selectedItemId = TAB_SOUND },
-            settingRow("Reset DSP settings", "Return EQ and widener controls to their stored defaults", android.R.drawable.ic_menu_revert) { confirmResetDsp() }
+            settingRow("Sound controls", "Graphic EQ, Parametric EQ and Immersion Engine", android.R.drawable.ic_menu_manage) { bottomNav.selectedItemId = TAB_SOUND },
+            settingRow("Reset DSP settings", "Return EQ and immersion controls to their stored defaults", android.R.drawable.ic_menu_revert) { confirmResetDsp() }
         )))
 
         root.addView(settingsGroup("Appearance", listOf(
@@ -703,7 +703,7 @@ class MainActivity : AppCompatActivity() {
         )))
 
         root.addView(settingsGroup("About", listOf(
-            settingRow("Audiophile Player", "Version ${appVersionName()} • custom C++ DSP engine", android.R.drawable.ic_menu_info_details) { showInfoDialog("About", "Audiophile Player ${appVersionName()}\n\nCustom audio chain:\nGraphic EQ → Parametric EQ → v10 Stereo Widener.\n\nThe visual theme is Midnight Audiophile.") }
+            settingRow("Audiophile Player", "Version ${appVersionName()} • custom C++ DSP engine", android.R.drawable.ic_menu_info_details) { showInfoDialog("About", "Audiophile Player ${appVersionName()}\n\nCustom audio chain:\nGraphic EQ → Parametric EQ → measured-HRTF Immersion Engine.\n\nThe visual theme is Midnight Audiophile.") }
         )))
 
         scroll.addView(root)
@@ -1001,7 +1001,7 @@ class MainActivity : AppCompatActivity() {
             append("Track: ${item?.mediaMetadata?.title ?: "Nothing playing"}\n")
             append("Artist: ${item?.mediaMetadata?.artist ?: "—"}\n\n")
             append("PEQ latency: $peqLatency frames\n")
-            append("Stereo widener latency: $widenerLatency frames\n")
+            append("Immersion Engine: measured-HRTF spatial processing\n")
             append("Processing mode: PCM path\n")
             append("True-peak protection: enabled in the DSP stages where configured")
         }
@@ -1011,7 +1011,7 @@ class MainActivity : AppCompatActivity() {
     private fun confirmResetDsp() {
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Reset DSP settings?")
-            .setMessage("Return Graphic EQ, Parametric EQ and Stereo Widener controls to their stored default state.")
+            .setMessage("Return Graphic EQ, Parametric EQ and Immersion Engine controls to their stored default state.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Reset") { _, _ ->
                 val store = EqSettingsStore(this)
@@ -1036,19 +1036,6 @@ class MainActivity : AppCompatActivity() {
                     p.applyPreset(PeqResetPreset)
                 }
                 store.saveGraphic(FloatArray(10), false)
-                DspRuntime.widenerEngine?.let {
-                    it.enabled = true
-                    it.width = 1f
-                    it.dryWet = 1f
-                    it.bassMonoFrequencyHz = 80f
-                    it.lowCrossoverHz = 180f
-                    it.highCrossoverHz = 3200f
-                    it.haasDelayMs = 0f
-                    it.haasMix = 0f
-                    it.outputGainDb = 0f
-                    it.outputCeilingDb = -1f
-                    it.autoLevel = true
-                }
                 saveDsp()
                 showInfoDialog("DSP reset", "The major DSP stages have been returned to their neutral/default state.")
             }
@@ -1057,10 +1044,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveDsp() {
         val p = DspRuntime.peqEngine ?: return
-        val w = DspRuntime.widenerEngine ?: return
         val store = EqSettingsStore(this)
         store.savePeq(p)
-        store.saveWidener(w)
+        store.saveGraphic(FloatArray(10), p.graphicEqEnabled)
     }
 
     private fun showInfoDialog(title: String, message: String) {
