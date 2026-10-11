@@ -300,6 +300,8 @@ private:
     std::array<float, 2 * kMaxTaps> histL_{}, histR_{};
     std::array<float, kMaxTaps> hLL_{}, hLR_{}, hRL_{}, hRR_{};
     std::array<float, kErSize> er_{};
+    std::atomic<bool> enabled_{true};
+    std::atomic<float> space_{0.35f}, amb_{0.30f}, air_{0.30f}, bass_{0.30f}, profileTarget_{0.50f};
 };
 } // namespace ImmersionDSP
 
