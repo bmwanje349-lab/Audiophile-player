@@ -996,7 +996,6 @@ class MainActivity : AppCompatActivity() {
         val c = controller
         val item = c?.currentMediaItem
         val peqLatency = DspRuntime.peqEngine?.latencyFrames ?: 0
-        val widenerLatency = DspRuntime.widenerEngine?.latencyFrames ?: 0
         val body = buildString {
             append("Track: ${item?.mediaMetadata?.title ?: "Nothing playing"}\n")
             append("Artist: ${item?.mediaMetadata?.artist ?: "—"}\n\n")
