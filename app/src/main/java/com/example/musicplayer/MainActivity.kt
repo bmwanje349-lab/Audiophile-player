@@ -754,10 +754,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun statusCard(): View {
         val peq = DspRuntime.peqEngine
-        val widener = DspRuntime.widenerEngine
         val peqLatency = peq?.latencyFrames ?: 0
-        val widenerLatency = widener?.latencyFrames ?: 0
-        val text = "PEQ latency: $peqLatency frames\nWidener latency: $widenerLatency frames\nCustom DSP active through the PCM processing path when enabled."
+        val text = "PEQ latency: $peqLatency frames\nImmersion Engine: measured-HRTF spatial processing\nCustom DSP active through the PCM processing path when enabled."
         return infoCard("DSP status", text)
     }
 
