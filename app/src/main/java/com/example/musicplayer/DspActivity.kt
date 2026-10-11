@@ -16,7 +16,6 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import com.example.audio.ImmersionSettings
-import com.example.audio.LoudnessSettings
 import com.example.peq.FilterType
 import com.example.peq.GraphicalEqController
 import com.example.peq.GraphicalEqView
