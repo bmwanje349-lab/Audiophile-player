@@ -22,7 +22,6 @@ import com.example.peq.GraphicalEqController
 import com.example.peq.GraphicalEqView
 import com.example.peq.PeqEngine
 import com.example.peq.PeqPresets
-import com.example.peq.WidenerEngine
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
@@ -33,7 +32,6 @@ class DspActivity : AppCompatActivity() {
 
     private var section: String = "hub"
     private val peq: PeqEngine? get() = DspRuntime.peqEngine
-    private val widener: WidenerEngine? get() = DspRuntime.widenerEngine
     private var geqController: GraphicalEqController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,7 +40,7 @@ class DspActivity : AppCompatActivity() {
         title = when (section) {
             "graphic" -> "Graphic Equalizer"
             "parametric" -> "Parametric Equalizer"
-            "stereo" -> "Stereo Widener"
+            "stereo" -> "Immersion Engine"
             else -> "Sound"
         }
         setContentView(wrapScreen(when (section) {
@@ -96,10 +94,10 @@ class DspActivity : AppCompatActivity() {
 
         root.addView(launchCard("Graphic Equalizer", "10 bands • fast, familiar tone shaping", "graphic"))
         root.addView(launchCard("Parametric Equalizer", "16 bands • frequency, gain, Q and filter type", "parametric"))
-        root.addView(launchCard("Stereo Widener", "Professional spatial processing with protection", "stereo"))
+        root.addView(launchCard("Immersion Engine", "Measured HRTF spatialization with D1 + H10 profiles", "stereo"))
 
         root.addView(sectionLabel("Engine overview"))
-        root.addView(infoCard("Signal chain", "Graphic EQ → Parametric EQ → program-dependent curve makeup → v10 Stereo Widener → final output path"))
+        root.addView(infoCard("Signal chain", "Graphic EQ → Parametric EQ → measured-HRTF Immersion Engine → final output path"))
         root.addView(infoCard("Design principle", "The interface exposes musical controls. Filter design, smoothing, true-peak detection and stereo-safety processing stay inside the engine."))
 
         scroll.addView(root)
@@ -323,22 +321,12 @@ class DspActivity : AppCompatActivity() {
     }
 
     private fun buildStereo(): View {
-        val engine = widener ?: return unavailable()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(8), dp(12), dp(28))
         }
-
         root.addView(SwitchMaterial(this).apply {
-            text = "Enable Stereo Widener"
-            isChecked = engine.enabled
-            setTextColor(TEXT)
-            setOnCheckedChangeListener { _, on -> engine.enabled = on; saveDsp() }
-        }, LinearLayout.LayoutParams(-1, dp(54)))
-
-        root.addView(sectionLabel("Immersion (psychoacoustic)"))
-        root.addView(SwitchMaterial(this).apply {
-            text = "Enable Immersion"
+            text = "Enable Immersion Engine"
             isChecked = ImmersionSettings.enabled
             setTextColor(TEXT)
             setOnCheckedChangeListener { _, on ->
@@ -346,67 +334,28 @@ class DspActivity : AppCompatActivity() {
                 ImmersionSettings.save(this@DspActivity)
             }
         }, LinearLayout.LayoutParams(-1, dp(54)))
-        root.addView(bigSliderCard("Space (natural width)", 0f, 100f, ImmersionSettings.space * 100f, "${format(ImmersionSettings.space * 100f)}%") {
+        root.addView(sectionLabel("Measured HRTF spatialization"))
+        root.addView(bigSliderCard("Space", 0f, 100f, ImmersionSettings.space * 100f, format(ImmersionSettings.space * 100f).plus("%")) {
             ImmersionSettings.space = it / 100f
             ImmersionSettings.save(this)
         })
-        root.addView(bigSliderCard("Ambience (depth)", 0f, 100f, ImmersionSettings.ambience * 100f, "${format(ImmersionSettings.ambience * 100f)}%") {
+        root.addView(bigSliderCard("Ambience", 0f, 100f, ImmersionSettings.ambience * 100f, format(ImmersionSettings.ambience * 100f).plus("%")) {
             ImmersionSettings.ambience = it / 100f
             ImmersionSettings.save(this)
         })
-        root.addView(bigSliderCard("Air (sparkle)", 0f, 100f, ImmersionSettings.air * 100f, "${format(ImmersionSettings.air * 100f)}%") {
+        root.addView(bigSliderCard("Air", 0f, 100f, ImmersionSettings.air * 100f, format(ImmersionSettings.air * 100f).plus("%")) {
             ImmersionSettings.air = it / 100f
             ImmersionSettings.save(this)
         })
-        root.addView(bigSliderCard("Bass depth", 0f, 100f, ImmersionSettings.bass * 100f, "${format(ImmersionSettings.bass * 100f)}%") {
+        root.addView(bigSliderCard("Bass protection", 0f, 100f, ImmersionSettings.bass * 100f, format(ImmersionSettings.bass * 100f).plus("%")) {
             ImmersionSettings.bass = it / 100f
             ImmersionSettings.save(this)
         })
-        root.addView(infoCard("Immersion", "Adds controlled stereo width, early reflections with a damped room tail, gentle high-frequency air, and restrained bass harmonics. The direct sound stays dominant; compare enabled/disabled at matched loudness."))
-
-        root.addView(sectionLabel("Loudness / Power"))
-        root.addView(SwitchMaterial(this).apply {
-            text = "Loudness stage (preamp + limiter)"
-            isChecked = LoudnessSettings.enabled
-            setTextColor(TEXT)
-            setOnCheckedChangeListener { _, on -> LoudnessSettings.enabled = on; LoudnessSettings.save(this@DspActivity) }
-        }, LinearLayout.LayoutParams(-1, dp(54)))
-        root.addView(bigSliderCard("Preamp", -12f, 12f, LoudnessSettings.preampDb, "${format(LoudnessSettings.preampDb)} dB") { LoudnessSettings.preampDb = it; LoudnessSettings.save(this) })
-        root.addView(SwitchMaterial(this).apply {
-            text = "Smart loudness (lift quiet songs)"
-            isChecked = LoudnessSettings.smartEnabled
-            setTextColor(TEXT)
-            setOnCheckedChangeListener { _, on -> LoudnessSettings.smartEnabled = on; LoudnessSettings.save(this@DspActivity) }
-        }, LinearLayout.LayoutParams(-1, dp(54)))
-        root.addView(featureSlider("Target loudness", -20f, -8f, LoudnessSettings.targetLufs, "${format(LoudnessSettings.targetLufs)} LUFS") { LoudnessSettings.targetLufs = it; LoudnessSettings.save(this) })
-        root.addView(featureSlider("Max boost", 0f, 15f, LoudnessSettings.maxBoostDb, "${format(LoudnessSettings.maxBoostDb)} dB") { LoudnessSettings.maxBoostDb = it; LoudnessSettings.save(this) })
-        root.addView(featureSlider("Final ceiling", -6f, 0f, LoudnessSettings.ceilingDb, "${format(LoudnessSettings.ceilingDb)} dB") { LoudnessSettings.ceilingDb = it; LoudnessSettings.save(this) })
-        root.addView(infoCard("How it works", "Songs are converted to 32-bit float, optionally lifted toward the target loudness, then passed through a look-ahead limiter that guarantees the ceiling is never exceeded - so you get a louder sound without clipping."))
-
-        root.addView(sectionLabel("Core controls"))
-        root.addView(bigSliderCard("Width", 0f, 250f, engine.width * 100f, "${format(engine.width * 100f)}%") { engine.width = it / 100f; saveDsp() })
-        root.addView(bigSliderCard("Effect mix", 0f, 100f, engine.dryWet * 100f, "${format(engine.dryWet * 100f)}%") { engine.dryWet = it / 100f; saveDsp() })
-
-        root.addView(sectionLabel("Bass protection"))
-        root.addView(bigSliderCard("Bass mono point", 20f, 250f, engine.bassMonoFrequencyHz, "${format(engine.bassMonoFrequencyHz)} Hz") { engine.bassMonoFrequencyHz = it; saveDsp() })
-        root.addView(infoCard("Why it is here", "Low frequencies are kept more compatible with stereo playback as width increases. The detailed M/S, crossover and correlation-safety processing remains inside v10."))
-
-        root.addView(sectionLabel("Advanced"))
-        root.addView(featureSlider("Low crossover", 40f, 400f, engine.lowCrossoverHz, "${format(engine.lowCrossoverHz)} Hz") { engine.lowCrossoverHz = it; saveDsp() })
-        root.addView(featureSlider("High crossover", 1000f, 10000f, engine.highCrossoverHz, "${format(engine.highCrossoverHz)} Hz") { engine.highCrossoverHz = it; saveDsp() })
-        root.addView(featureSlider("Haas delay", 0f, 10f, engine.haasDelayMs, "${format(engine.haasDelayMs)} ms") { engine.haasDelayMs = it; saveDsp() })
-        root.addView(featureSlider("Haas mix", 0f, 100f, engine.haasMix * 100f, "${format(engine.haasMix * 100f)}%") { engine.haasMix = it / 100f; saveDsp() })
-        root.addView(featureSlider("Output gain", -12f, 6f, engine.outputGainDb, "${format(engine.outputGainDb)} dB") { engine.outputGainDb = it; saveDsp() })
-        root.addView(featureSlider("Limiter ceiling", -12f, 0f, engine.outputCeilingDb, "${format(engine.outputCeilingDb)} dB") { engine.outputCeilingDb = it; saveDsp() })
-        root.addView(SwitchMaterial(this).apply {
-            text = "Automatic level matching"
-            isChecked = engine.autoLevel
-            setTextColor(TEXT)
-            setOnCheckedChangeListener { _, on -> engine.autoLevel = on; saveDsp() }
-        }, LinearLayout.LayoutParams(-1, dp(54)))
-
-        root.addView(infoCard("Latency", "Current v10 latency: ${engine.latencyFrames} frames at the active sample rate once the processor is prepared."))
-
+        root.addView(bigSliderCard("HRTF profile blend", 0f, 100f, ImmersionSettings.profile * 100f, format(ImmersionSettings.profile * 100f).plus("%")) {
+            ImmersionSettings.profile = it / 100f
+            ImmersionSettings.save(this)
+        })
+        root.addView(infoCard("Engine", "This replaces the legacy stereo widener and legacy immersion DSP in the playback chain. It uses compact measured D1 and H10 HRTF presets with virtual-speaker interpolation while protecting the direct center and low-frequency energy."))
         return NestedScrollView(this).apply { addView(root) }
     }
 
@@ -549,12 +498,10 @@ class DspActivity : AppCompatActivity() {
 
     private fun saveDsp() {
         val p = peq ?: return
-        val w = widener ?: return
         val store = EqSettingsStore(this)
         val gains = geqController?.let { FloatArray(10) { i -> it.getGain(i) } } ?: store.loadGraphicGains()
         store.saveGraphic(gains, p.graphicEqEnabled)
         store.savePeq(p)
-        store.saveWidener(w)
     }
 
     private fun format(v: Float): String = when {
