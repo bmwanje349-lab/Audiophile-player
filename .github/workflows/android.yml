@@ -158,7 +158,8 @@ jobs:
               for abi in ("arm64-v8a","armeabi-v7a","x86_64"):
                   assert f"lib/{abi}/libaudiophile_vocal_remover.so" in names, f"vocal JNI missing for {abi}"
                   assert f"lib/{abi}/libpeq.so" in names, f"PEQ JNI missing for {abi}"
-                  assert f"lib/{abi}/libaudiophile_immersion.so" in names, f"Immersion JNI missing for {abi}"\n                  assert f"lib/{abi}/libwidener.so" not in names, f"Legacy widener should have been removed for {abi}"
+                  assert f"lib/{abi}/libaudiophile_immersion.so" in names, f"Immersion JNI missing for {abi}"
+                  assert f"lib/{abi}/libwidener.so" not in names, f"Legacy widener should have been removed for {abi}"
                   assert f"lib/{abi}/libonnxruntime.so" in names or any(
                       n.startswith(f"lib/{abi}/") and "onnxruntime" in n for n in names
                   ), f"ONNX Runtime native library missing for {abi}"
