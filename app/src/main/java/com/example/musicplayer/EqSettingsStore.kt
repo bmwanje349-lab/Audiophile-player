@@ -4,7 +4,6 @@ import android.content.Context
 import com.example.peq.FilterType
 import com.example.peq.PeqBand
 import com.example.peq.PeqEngine
-import com.example.peq.WidenerEngine
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -20,25 +19,19 @@ class EqSettingsStore(context: Context) {
     fun loadGraphicEnabled(): Boolean = prefs.getBoolean(KEY_GRAPHIC_ENABLED, false)
 
     fun saveGraphic(gains: FloatArray, enabled: Boolean) {
-        prefs.edit()
-            .putString(KEY_GRAPHIC, gains.joinToString(","))
-            .putBoolean(KEY_GRAPHIC_ENABLED, enabled)
-            .apply()
+        prefs.edit().putString(KEY_GRAPHIC, gains.joinToString(","))
+            .putBoolean(KEY_GRAPHIC_ENABLED, enabled).apply()
     }
 
     fun savePeq(peq: PeqEngine) {
         val array = JSONArray()
         peq.bands.forEach { band ->
             array.put(JSONObject().apply {
-                put("type", band.type.id)
-                put("freq", band.freq)
-                put("gain", band.gainDb)
-                put("q", band.q)
-                put("enabled", band.enabled)
+                put("type", band.type.id); put("freq", band.freq)
+                put("gain", band.gainDb); put("q", band.q); put("enabled", band.enabled)
             })
         }
-        prefs.edit()
-            .putString(KEY_PEQ_BANDS, array.toString())
+        prefs.edit().putString(KEY_PEQ_BANDS, array.toString())
             .putBoolean(KEY_PEQ_ENABLED, peq.peqEnabled)
             .putBoolean(KEY_PEQ_LIMITER, peq.limiterEnabled)
             .putFloat(KEY_PEQ_CEILING, peq.limiterCeilingDb)
@@ -46,24 +39,10 @@ class EqSettingsStore(context: Context) {
             .putBoolean(KEY_PEQ_AUTO, peq.autoGainEnabled)
             .putFloat(KEY_PEQ_AUTO_AMOUNT, peq.autoGainAmount)
             .putBoolean(KEY_PEQ_LINEAR, peq.linearPhaseEnabled)
-            .putInt(KEY_PEQ_TAPS, peq.linearPhaseTaps)
-            .apply()
-    }
-
-    /** One-time migration: earlier builds stored -1 dB ceilings (+0.25 dB widener margin) that cost loudness. */
-    private fun migrateCeilings() {
-        if (prefs.getBoolean("ceil_migrated_v2", false)) return
-        prefs.edit()
-            .putFloat(KEY_PEQ_CEILING, -0.3f)
-            .putFloat(KEY_PEQ_SAFETY, 0.05f)
-            .putFloat(KEY_W_CEILING, -0.3f)
-            .putFloat(KEY_W_SAFETY, 0.05f)
-            .putBoolean("ceil_migrated_v2", true)
-            .apply()
+            .putInt(KEY_PEQ_TAPS, peq.linearPhaseTaps).apply()
     }
 
     fun applyPeq(peq: PeqEngine) {
-        migrateCeilings()
         peq.peqEnabled = prefs.getBoolean(KEY_PEQ_ENABLED, true)
         peq.limiterEnabled = prefs.getBoolean(KEY_PEQ_LIMITER, true)
         peq.limiterCeilingDb = prefs.getFloat(KEY_PEQ_CEILING, -0.3f)
@@ -72,68 +51,24 @@ class EqSettingsStore(context: Context) {
         peq.autoGainAmount = prefs.getFloat(KEY_PEQ_AUTO_AMOUNT, 1f)
         peq.linearPhaseTaps = prefs.getInt(KEY_PEQ_TAPS, 513)
         peq.linearPhaseEnabled = prefs.getBoolean(KEY_PEQ_LINEAR, false)
-
         val raw = prefs.getString(KEY_PEQ_BANDS, null) ?: return
         val array = runCatching { JSONArray(raw) }.getOrNull() ?: return
         for (i in 0 until minOf(array.length(), peq.numBands)) {
             val item = array.optJSONObject(i) ?: continue
             val type = FilterType.entries.firstOrNull { it.id == item.optInt("type", 0) }
                 ?: FilterType.PEAKING
-            val band = PeqBand(
-                type = type,
-                freq = item.optDouble("freq", 1000.0).toFloat(),
-                gainDb = item.optDouble("gain", 0.0).toFloat(),
-                q = item.optDouble("q", 1.0).toFloat(),
-                enabled = item.optBoolean("enabled", true),
-            )
-            peq.setBand(i, band)
+            peq.setBand(i, PeqBand(type, item.optDouble("freq", 1000.0).toFloat(),
+                item.optDouble("gain", 0.0).toFloat(), item.optDouble("q", 1.0).toFloat(),
+                item.optBoolean("enabled", true)))
         }
     }
 
-    fun saveWidener(w: WidenerEngine) {
-        prefs.edit()
-            .putBoolean(KEY_W_ENABLED, w.enabled)
-            .putFloat(KEY_W_WIDTH, w.width)
-            .putFloat(KEY_W_LOW, w.lowCrossoverHz)
-            .putFloat(KEY_W_HIGH, w.highCrossoverHz)
-            .putFloat(KEY_W_BASS, w.bassMonoFrequencyHz)
-            .putFloat(KEY_W_HAAS_DELAY, w.haasDelayMs)
-            .putFloat(KEY_W_HAAS_MIX, w.haasMix)
-            .putFloat(KEY_W_DRY_WET, w.dryWet)
-            .putFloat(KEY_W_OUTPUT_GAIN, w.outputGainDb)
-            .putFloat(KEY_W_CEILING, w.outputCeilingDb)
-            .putFloat(KEY_W_SAFETY, w.limiterSafetyMarginDb)
-            .putBoolean(KEY_W_AUTO, w.autoLevel)
-            .apply()
-    }
-
-    fun applyWidener(w: WidenerEngine) {
-        migrateCeilings()
-        w.enabled = prefs.getBoolean(KEY_W_ENABLED, true)
-        w.width = prefs.getFloat(KEY_W_WIDTH, 1f)
-        w.lowCrossoverHz = prefs.getFloat(KEY_W_LOW, 180f)
-        w.highCrossoverHz = prefs.getFloat(KEY_W_HIGH, 3200f)
-        w.bassMonoFrequencyHz = prefs.getFloat(KEY_W_BASS, 80f)
-        w.haasDelayMs = prefs.getFloat(KEY_W_HAAS_DELAY, 0f)
-        w.haasMix = prefs.getFloat(KEY_W_HAAS_MIX, 0f)
-        w.dryWet = prefs.getFloat(KEY_W_DRY_WET, 1f)
-        w.outputGainDb = prefs.getFloat(KEY_W_OUTPUT_GAIN, 0f)
-        w.outputCeilingDb = prefs.getFloat(KEY_W_CEILING, -0.3f)
-        w.limiterSafetyMarginDb = prefs.getFloat(KEY_W_SAFETY, 0.05f)
-        w.autoLevel = prefs.getBoolean(KEY_W_AUTO, true)
-    }
-
-    fun applyTo(peq: PeqEngine, widener: WidenerEngine) {
+    fun applyTo(peq: PeqEngine) {
         applyPeq(peq)
-
-        // Graphic EQ state is applied in one native batch.
         val gains = loadGraphicGains()
         com.example.peq.GraphicalEqController(peq).apply {
-            setAll(gains)
-            enabled = loadGraphicEnabled()
+            setAll(gains); enabled = loadGraphicEnabled()
         }
-
-        applyWidener(widener)
     }
 
     companion object {
@@ -148,18 +83,5 @@ class EqSettingsStore(context: Context) {
         private const val KEY_PEQ_AUTO_AMOUNT = "peq_auto_amount"
         private const val KEY_PEQ_LINEAR = "peq_linear"
         private const val KEY_PEQ_TAPS = "peq_taps"
-
-        private const val KEY_W_ENABLED = "w_enabled"
-        private const val KEY_W_WIDTH = "w_width"
-        private const val KEY_W_LOW = "w_low"
-        private const val KEY_W_HIGH = "w_high"
-        private const val KEY_W_BASS = "w_bass"
-        private const val KEY_W_HAAS_DELAY = "w_haas_delay"
-        private const val KEY_W_HAAS_MIX = "w_haas_mix"
-        private const val KEY_W_DRY_WET = "w_dry_wet"
-        private const val KEY_W_OUTPUT_GAIN = "w_output_gain"
-        private const val KEY_W_CEILING = "w_ceiling"
-        private const val KEY_W_SAFETY = "w_safety"
-        private const val KEY_W_AUTO = "w_auto"
     }
 }

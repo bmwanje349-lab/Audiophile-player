@@ -14,36 +14,27 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.example.audio.ImmersionProcessor
 import com.example.audio.ImmersionSettings
-import com.example.audio.LoudnessProcessor
-import com.example.audio.LoudnessSettings
 import com.example.audio.FloatToPcm16Processor
 import com.example.audio.ToFloatProcessor
 import com.example.peq.PeqAudioProcessor
 import com.example.peq.PeqEngine
-import com.example.peq.WidenerAudioProcessor
-import com.example.peq.WidenerEngine
 
 @UnstableApi
 class PlaybackService : MediaSessionService() {
     private lateinit var player: ExoPlayer
     private lateinit var mediaSession: MediaSession
     private lateinit var peqEngine: PeqEngine
-    private lateinit var widenerEngine: WidenerEngine
 
     override fun onCreate() {
         super.onCreate()
 
         peqEngine = PeqEngine(16)
-        widenerEngine = WidenerEngine()
         DspRuntime.peqEngine = peqEngine
-        DspRuntime.widenerEngine = widenerEngine
 
-        EqSettingsStore(this).applyTo(peqEngine, widenerEngine)
-        LoudnessSettings.load(this)
+        EqSettingsStore(this).applyTo(peqEngine)
         ImmersionSettings.load(this)
 
         val peqProcessor = PeqAudioProcessor(peqEngine)
-        val widenerProcessor = WidenerAudioProcessor(widenerEngine)
 
         val renderersFactory = object : DefaultRenderersFactory(this) {
             override fun buildAudioSink(
@@ -56,7 +47,7 @@ class PlaybackService : MediaSessionService() {
                     // Float end-to-end: avoids 16-bit quantisation/clipping between DSP stages.
                     .setEnableFloatOutput(false)
                     .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
-                    .setAudioProcessors(arrayOf(ToFloatProcessor(), peqProcessor, widenerProcessor, ImmersionProcessor(), LoudnessProcessor(), FloatToPcm16Processor()))
+                    .setAudioProcessors(arrayOf(ToFloatProcessor(), peqProcessor, ImmersionProcessor(), FloatToPcm16Processor()))
                     .build()
             }
         }
@@ -104,10 +95,8 @@ class PlaybackService : MediaSessionService() {
         if (::player.isInitialized) player.release()
 
         DspRuntime.peqEngine = null
-        DspRuntime.widenerEngine = null
 
         if (::peqEngine.isInitialized) peqEngine.close()
-        if (::widenerEngine.isInitialized) widenerEngine.close()
         super.onDestroy()
     }
 }
