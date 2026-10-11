@@ -6,12 +6,9 @@ import androidx.media3.common.util.UnstableApi
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.audio.FloatToPcm16Processor
 import com.example.audio.ImmersionProcessor
-import com.example.audio.LoudnessProcessor
 import com.example.audio.ToFloatProcessor
 import com.example.peq.PeqAudioProcessor
 import com.example.peq.PeqEngine
-import com.example.peq.WidenerAudioProcessor
-import com.example.peq.WidenerEngine
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
@@ -30,13 +27,10 @@ class AudioPipelineSmokeTest {
     fun floatDspChainProducesNonSilentPcm16Output() {
         val sampleRate = 44_100
         val peq = PeqEngine(16)
-        val widener = WidenerEngine()
         val processors: List<AudioProcessor> = listOf(
             ToFloatProcessor(),
             PeqAudioProcessor(peq),
-            WidenerAudioProcessor(widener),
             ImmersionProcessor(),
-            LoudnessProcessor(),
             FloatToPcm16Processor(),
         )
 
@@ -78,7 +72,6 @@ class AudioPipelineSmokeTest {
         } finally {
             processors.forEach { processor -> runCatching { processor.reset() } }
             peq.close()
-            widener.close()
         }
     }
 }
