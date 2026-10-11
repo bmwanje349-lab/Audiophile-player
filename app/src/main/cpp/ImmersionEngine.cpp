@@ -38,8 +38,32 @@ public:
 private:
  static float clamp(float x,float lo=0,float hi=1){return std::max(lo,std::min(hi,x));}
  static float safe(float x){return std::isfinite(x)?x:0;}
- void interp(const int16_t*t,float az,int ear,float*d){float a=std::fmod(az+360.f,360.f)/60.f;int i0=(int)std::floor(a)%A,i1=(i0+1)%A;float f=a-std::floor(a);const int16_t*p0=t+(i0*2+ear)*T,*p1=t+(i1*2+ear)*T;for(int k=0;k<T;++k)d[k]=((1-f)*p0[k]+f*p1[k])/32767.f;}
- void rebuild(){float dLL[T],dLR[T],dRL[T],dRR[T],hLL[T],hLR[T],hRL[T],hRR[T];float half=separation_*.5f;interp(ImmersionHrtf::kD1,half,0,dLL);interp(ImmersionHrtf::kD1,half,1,dLR);interp(ImmersionHrtf::kD1,-half,0,dRL);interp(ImmersionHrtf::kD1,-half,1,dRR);interp(ImmersionHrtf::kH10,half,0,hLL);interp(ImmersionHrtf::kH10,half,1,hLR);interp(ImmersionHrtf::kH10,-half,0,hRL);interp(ImmersionHrtf::kH10,-half,1,hRR);for(int k=0;k<T;++k){hLL_[k]=(1-profile_)*dLL[k]+profile_*hLL[k];hLR_[k]=(1-profile_)*dLR[k]+profile_*hLR[k];hRL_[k]=(1-profile_)*dRL[k]+profile_*hRL[k];hRR_[k]=(1-profile_)*dRR[k]+profile_*hRR[k];}}
+ const int16_t* angleResponse(bool h10,int angle) const noexcept {
+  if (angle == 1) return h10 ? ImmersionHrtf::kH10_60.data() : ImmersionHrtf::kD1_60.data();
+  if (angle == 5) return h10 ? ImmersionHrtf::kH10_300.data() : ImmersionHrtf::kD1_300.data();
+  return h10 ? ImmersionHrtf::kH10_0.data() : ImmersionHrtf::kD1_0.data();
+ }
+ void interp(bool h10,float az,int ear,float*d){
+  float a=std::fmod(az+360.f,360.f)/60.f;
+  int i0=(int)std::floor(a)%A,i1=(i0+1)%A;
+  float f=a-std::floor(a);
+  const int16_t*p0=angleResponse(h10,i0)+ear*T,*p1=angleResponse(h10,i1)+ear*T;
+  for(int k=0;k<T;++k)d[k]=((1-f)*p0[k]+f*p1[k])/32767.f;
+ }
+ void rebuild(){
+  float dLL[T],dLR[T],dRL[T],dRR[T],hLL[T],hLR[T],hRL[T],hRR[T];
+  float half=separation_*.5f;
+  interp(false,half,0,dLL);interp(false,half,1,dLR);
+  interp(false,-half,0,dRL);interp(false,-half,1,dRR);
+  interp(true,half,0,hLL);interp(true,half,1,hLR);
+  interp(true,-half,0,hRL);interp(true,-half,1,hRR);
+  for(int k=0;k<T;++k){
+   hLL_[k]=(1-profile_)*dLL[k]+profile_*hLL[k];
+   hLR_[k]=(1-profile_)*dLR[k]+profile_*hLR[k];
+   hRL_[k]=(1-profile_)*dRL[k]+profile_*hRL[k];
+   hRR_[k]=(1-profile_)*dRR[k]+profile_*hRR[k];
+  }
+ }
  int fs_=48000,pos_=0;float separation_=45,profile_=.5,roomL_=0,roomR_=0,prevL_=0,prevR_=0,bassL_=0,bassR_=0;
  std::array<float,T>histL_{},histR_{},hLL_{},hLR_{},hRL_{},hRR_{};
  std::atomic<bool>enabled_{true};std::atomic<float>space_{.35f},amb_{.30f},air_{.30f},bass_{.30f},profileTarget_{.5f};
