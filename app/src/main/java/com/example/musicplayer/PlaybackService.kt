@@ -2,6 +2,7 @@ package com.example.musicplayer
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -12,6 +13,7 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.example.audio.ImmersionNative
 import com.example.audio.ImmersionProcessor
 import com.example.audio.ImmersionSettings
 import com.example.audio.FloatToPcm16Processor
@@ -33,6 +35,9 @@ class PlaybackService : MediaSessionService() {
 
         EqSettingsStore(this).applyTo(peqEngine)
         ImmersionSettings.load(this)
+        if (!ImmersionNative.loadAssets(assets)) {
+            Log.e("AudiophilePlayer", "Failed to load the verified SADIE II HRIR/BRIR assets; immersion will use its safe fallback.")
+        }
 
         val peqProcessor = PeqAudioProcessor(peqEngine)
 

@@ -93,7 +93,7 @@ class DspActivity : AppCompatActivity() {
 
         root.addView(launchCard("Graphic Equalizer", "10 bands • fast, familiar tone shaping", "graphic"))
         root.addView(launchCard("Parametric Equalizer", "16 bands • frequency, gain, Q and filter type", "parametric"))
-        root.addView(launchCard("Immersion Engine", "Measured HRTF spatialization with D1 + H10 profiles", "stereo"))
+        root.addView(launchCard("Immersion Engine", "Measured D1 HRTF field + measured room-response convolution", "stereo"))
 
         root.addView(sectionLabel("Engine overview"))
         root.addView(infoCard("Signal chain", "Graphic EQ → Parametric EQ → measured-HRTF Immersion Engine → final output path"))
@@ -350,11 +350,11 @@ class DspActivity : AppCompatActivity() {
             ImmersionSettings.bass = it / 100f
             ImmersionSettings.save(this)
         })
-        root.addView(bigSliderCard("HRTF profile blend", 0f, 100f, ImmersionSettings.profile * 100f, format(ImmersionSettings.profile * 100f).plus("%")) {
+        root.addView(bigSliderCard("HRTF blend", 0f, 100f, ImmersionSettings.profile * 100f, format(ImmersionSettings.profile * 100f).plus("%")) {
             ImmersionSettings.profile = it / 100f
             ImmersionSettings.save(this)
         })
-        root.addView(infoCard("Engine", "This replaces the legacy stereo widener and legacy immersion DSP in the playback chain. It uses compact measured D1 and H10 HRTF presets with virtual-speaker interpolation while protecting the direct center and low-frequency energy."))
+        root.addView(infoCard("Engine", "This replaces the legacy stereo widener and legacy immersion DSP in the playback chain. It packages the 8,802-direction SADIE II D1 HRIR data and interpolates measured horizon responses for virtual left/right speakers. A separate partitioned FFT convolver adds the measured D1 room-reflection tail without doubling the direct response. HRTF blend, room ambience, air, and bass protection remain adjustable."))
         return NestedScrollView(this).apply { addView(root) }
     }
 

@@ -21,3 +21,20 @@ java -jar /tmp/audiophile-loudness-test.jar
 ```
 
 The widener include uses a repository-relative header name; the previous environment-specific `/home/claude/...` path has been removed.
+
+## Measured immersion engine assets
+
+The Android workflow downloads the pinned SADIE II D1 HRIR/BRIR archives from Zenodo,
+verifies their MD5 checksums against the uploaded archives, and runs
+\`tools/prepare_sadie_assets.py\` to create compact runtime assets before compiling.
+
+For a local build, install Python packages \`numpy\` and \`h5py\`, then run:
+
+\`\`\`sh
+python3 tools/prepare_sadie_assets.py --hrir-zip /path/to/D1_HRIR_SOFA.zip --brir-zip /path/to/D1_BRIR_SOFA.zip
+\`\`\`
+
+The generated \`app/src/main/assets/immersion/\` directory must exist before building.
+The runtime applies the measured HRIR FIRs directly and uses partitioned FFT convolution
+for the measured BRIR reflection tail; the BRIR's first 256 taps are removed so it does not
+duplicate the separate direct-path HRTF response.
