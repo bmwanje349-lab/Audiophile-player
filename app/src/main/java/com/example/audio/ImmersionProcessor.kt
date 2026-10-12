@@ -10,33 +10,56 @@ import java.nio.ByteBuffer
 
 object ImmersionSettings {
     @Volatile var enabled = true
-    @Volatile var space = 0.35f
-    @Volatile var ambience = 0.30f
-    @Volatile var air = 0.30f
+    @Volatile var space = 0.55f
+    @Volatile var ambience = 0.50f
+    @Volatile var air = 0.22f
     @Volatile var bass = 0.30f
-    // Retained preference key for compatibility; now controls dry-to-measured-HRTF blend.
-    @Volatile var profile = 0.50f
+    // Retained in memory for the native API; this now means dry-to-measured-HRTF blend.
+    @Volatile var profile = 0.82f
 
     private const val PREFS = "immersion_settings"
+    private const val SCHEMA_VERSION = 2
 
     fun load(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         enabled = prefs.getBoolean("enabled", true)
-        space = prefs.getFloat("space", 0.35f)
-        ambience = prefs.getFloat("ambience", 0.30f)
-        air = prefs.getFloat("air", 0.30f)
-        bass = prefs.getFloat("bass", 0.30f)
-        profile = prefs.getFloat("profile", 0.50f)
+        val oldVersion = prefs.getInt("schema_version", 0)
+
+        if (oldVersion < SCHEMA_VERSION) {
+            // Old "profile" meant D1/H10 interpolation and "ambience" was only a weak
+            // synthetic effect. Migrate to the measured HRIR+BRIR engine's intended
+            // defaults, preserving user settings when they already exceed the baseline.
+            space = maxOf(prefs.getFloat("space", 0.55f), 0.48f)
+            ambience = maxOf(prefs.getFloat("ambience", 0.50f), 0.45f)
+            air = prefs.getFloat("air", 0.22f)
+            bass = prefs.getFloat("bass", 0.30f)
+            profile = prefs.getFloat("hrtf_blend", 0.82f)
+            prefs.edit()
+                .putInt("schema_version", SCHEMA_VERSION)
+                .putFloat("space", space)
+                .putFloat("ambience", ambience)
+                .putFloat("air", air)
+                .putFloat("bass", bass)
+                .putFloat("hrtf_blend", profile)
+                .apply()
+        } else {
+            space = prefs.getFloat("space", 0.55f)
+            ambience = prefs.getFloat("ambience", 0.50f)
+            air = prefs.getFloat("air", 0.22f)
+            bass = prefs.getFloat("bass", 0.30f)
+            profile = prefs.getFloat("hrtf_blend", 0.82f)
+        }
     }
 
     fun save(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt("schema_version", SCHEMA_VERSION)
             .putBoolean("enabled", enabled)
             .putFloat("space", space)
             .putFloat("ambience", ambience)
             .putFloat("air", air)
             .putFloat("bass", bass)
-            .putFloat("profile", profile)
+            .putFloat("hrtf_blend", profile)
             .apply()
     }
 }
