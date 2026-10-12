@@ -104,6 +104,19 @@ jobs:
           grep -Fq 'ci/audiophile-debug.keystore.b64' app/build.gradle.kts
           test -f ci/audiophile-debug.keystore.b64
 
+      - name: Prepare verified SADIE II D1 HRIR and BRIR assets
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-cache-dir numpy h5py
+          python3 tools/prepare_sadie_assets.py
+
+      - name: Upload generated measured spatial assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: sadie-spatial-assets
+          path: app/src/main/assets/immersion/
+          if-no-files-found: error
+
       - name: Run immersion native host regression test
         run: |
           set -euo pipefail
@@ -150,6 +163,18 @@ jobs:
           model_size=29704436
           with zipfile.ZipFile(apk) as z:
               names=set(z.namelist())
+              hrir_asset="assets/immersion/hrir_d1_48k_256.bin"
+              brir_asset="assets/immersion/brir_d1_48k_16384.bin"
+              attribution="assets/immersion/SADIE_II_ATTRIBUTION.txt"
+              assert hrir_asset in names, "measured SADIE II HRIR asset missing from APK"
+              assert brir_asset in names, "measured SADIE II BRIR asset missing from APK"
+              assert attribution in names, "SADIE II attribution notice missing from APK"
+              hrir_data=z.read(hrir_asset)
+              brir_data=z.read(brir_asset)
+              assert len(hrir_data)==9083692, f"HRIR asset size {len(hrir_data)} is unexpected"
+              assert len(brir_data)==262188, f"BRIR asset size {len(brir_data)} is unexpected"
+              assert hrir_data[:8]==b"D1HRIR1\x00", "HRIR asset magic mismatch"
+              assert brir_data[:8]==b"D1BRIR1\x00", "BRIR asset magic mismatch"
               model="assets/models/mdx/UVR_MDXNET_9482.onnx"
               assert model in names, "bundled MDX model missing from APK"
               data=z.read(model)
@@ -210,12 +235,21 @@ jobs:
 
 
   production-release:
-    needs: check-model
+    needs:
+      - check-model
+      - build
     if: needs.check-model.outputs.available == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Download generated SADIE II spatial assets
+        uses: actions/download-artifact@v7
+        with:
+          name: sadie-spatial-assets
+          path: app/src/main/assets/immersion
+
 
       - name: Check production signing secrets
         id: signing
@@ -299,6 +333,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Download generated SADIE II spatial assets
+        uses: actions/download-artifact@v7
+        with:
+          name: sadie-spatial-assets
+          path: app/src/main/assets/immersion
+
 
       - name: Set up JDK 17
         uses: actions/setup-java@v6
