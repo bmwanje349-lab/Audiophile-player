@@ -166,7 +166,7 @@ func _run_smoke_test() -> void:
         _fail("Failed to save render screenshot (error %d)." % save_error)
         return
 
-    var bins: Dictionary = {
+    var bins: Dictionary = {}
     var world_left := int(image.get_width() * 0.12)
     var world_right := int(image.get_width() * 0.88)
     var world_top := int(image.get_height() * 0.25)
