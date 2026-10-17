@@ -30,7 +30,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/sw.js", "/manifest.webmanifest", "/icon.svg"):
             target = WEB / path.lstrip("/")
             if target.is_file():
-                kind = "application/javascript; charset=utf-8" if target.suffix == ".js" else "application/manifest+json"
+                kind = "application/javascript; charset=utf-8" if target.suffix == ".js" else ("image/svg+xml" if target.suffix == ".svg" else "application/manifest+json")
                 return self._send(200, target.read_bytes(), kind)
             return self._json(404, {"error": "File not found."})
         if path in ("/","/index.html"):
