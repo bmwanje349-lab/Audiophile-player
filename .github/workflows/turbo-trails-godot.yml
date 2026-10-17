@@ -72,7 +72,7 @@ jobs:
       - name: Configure Godot Android SDK paths and debug keystore
         run: |
           mkdir -p "$HOME/.config/godot" "$HOME/.android"
-          keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" \
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/android-debug.keystore" \
             -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass android -keypass android \
             -dname "CN=Android Debug,O=Android,C=US"
@@ -93,7 +93,7 @@ jobs:
       - name: Export signed Android APK
         working-directory: turbo-trails-godot
         env:
-          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: ${{ github.workspace }}/../.android/debug.keystore
+          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: ${{ runner.temp }}/android-debug.keystore
           GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
           GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
         run: |
