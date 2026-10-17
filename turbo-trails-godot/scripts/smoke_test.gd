@@ -41,6 +41,10 @@ func _run_smoke_test() -> void:
     if game.get("detailed_car_scene") == null:
         _fail("Detailed GLB vehicle was not imported as a Godot scene.")
         return
+    var nature_trees: Array = game.get("nature_tree_scenes")
+    if nature_trees.is_empty():
+        _fail("Imported CC0 roadside tree models were not loaded.")
+        return
 
     var road_segments = game.get("road_segments")
     if road_segments == null or road_segments.size() < 10:

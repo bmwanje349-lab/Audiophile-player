@@ -93,6 +93,11 @@ jobs:
           # Detailed Spectral GT RS sports car, dedicated CC0 1.0 by its author.
           curl --fail --location --retry 3 --retry-delay 2 "https://raw.githubusercontent.com/JaronKBragg7337/spectral-gt-rs/main/spectral_gt_rs_game_ready.glb" -o assets/vehicles/spectral_gt_rs_game_ready.glb
           test "$(stat -c %s assets/vehicles/spectral_gt_rs_game_ready.glb)" -gt 1000000
+          # Standalone CC0 nature props from Gobkit's open Nature Kit.
+          mkdir -p assets/nature
+          for model in TreeMed001 TreeMed002 TreeHigh001; do
+            curl --fail --location --retry 3 --retry-delay 2 "https://raw.githubusercontent.com/Ariescar/gobkit-free-assets/main/nature/$model.glb" -o "assets/nature/$model.glb"
+          done
           # Poly Haven Asphalt Track PBR texture maps, downloaded at mobile-friendly 1K.
           curl --fail --location --retry 3 --retry-delay 2 -H "User-Agent: TurboTrails3D-AssetImporter/1.0" "https://api.polyhaven.com/files/asphalt_track" -o "$RUNNER_TEMP/asphalt-track-files.json"
           DIFFUSE_URL="$(jq -r '.Diffuse["1k"].jpg.url // .diffuse["1k"].jpg.url // empty' "$RUNNER_TEMP/asphalt-track-files.json")"
@@ -108,6 +113,8 @@ jobs:
             Source: https://github.com/JaronKBragg7337/spectral-gt-rs
           - Asphalt Track PBR maps: Poly Haven, CC0.
             Source: https://polyhaven.com/a/asphalt_track
+          - Nature Kit trees: Gobkit free assets, CC0 1.0.
+            Source: https://github.com/Ariescar/gobkit-free-assets
           - Assets are downloaded during the Android build and packed into the APK.
           EOF
           du -h assets/vehicles/* assets/textures/*

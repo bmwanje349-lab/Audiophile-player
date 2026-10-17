@@ -16,6 +16,7 @@ var rng := RandomNumberGenerator.new()
 var material_cache: Dictionary = {}
 var road_material_cache: StandardMaterial3D
 var detailed_car_scene: PackedScene
+var nature_tree_scenes: Array[PackedScene] = []
 var road_segments: Array[Node3D] = []
 var traffic: Array[Dictionary] = []
 var coin_rows: Array[Dictionary] = []
@@ -43,6 +44,15 @@ func _ready() -> void:
     rng.randomize()
     if ResourceLoader.exists("res://assets/vehicles/spectral_gt_rs_game_ready.glb"):
         detailed_car_scene = load("res://assets/vehicles/spectral_gt_rs_game_ready.glb") as PackedScene
+    for tree_path in [
+        "res://assets/nature/TreeMed001.glb",
+        "res://assets/nature/TreeMed002.glb",
+        "res://assets/nature/TreeHigh001.glb"
+    ]:
+        if ResourceLoader.exists(tree_path):
+            var tree_scene := load(tree_path) as PackedScene
+            if tree_scene != null:
+                nature_tree_scenes.append(tree_scene)
     _make_environment()
     _make_ground_and_hills()
     _make_road()
@@ -253,8 +263,16 @@ func _make_roadside_scenery() -> void:
 
 func _make_tree(world_position: Vector3, style_index: int) -> Node3D:
     var tree := Node3D.new()
-    tree.name = "ColourfulRoadsideTree"
+    tree.name = "ImportedRoadsideTree" if not nature_tree_scenes.is_empty() else "ColourfulRoadsideTree"
     tree.position = world_position
+
+    if not nature_tree_scenes.is_empty():
+        var selected_scene: PackedScene = nature_tree_scenes[posmod(style_index, nature_tree_scenes.size())]
+        var imported_tree := selected_scene.instantiate() as Node3D
+        if imported_tree != null:
+            imported_tree.scale = Vector3.ONE * rng.randf_range(2.1, 3.1)
+            tree.add_child(imported_tree)
+            return tree
 
     var trunk_height: float = rng.randf_range(1.2, 2.0)
     var trunk := CylinderMesh.new()
