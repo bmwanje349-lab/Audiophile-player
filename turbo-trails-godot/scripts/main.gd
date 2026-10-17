@@ -52,13 +52,23 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+    # Resume/background frame gaps must not teleport traffic or scenery across the player.
+    delta = minf(delta, 0.05)
+
     # Some Android surface/activity transitions can reset the active camera.
     # Reassert it so the scene cannot silently render without a view camera.
     if is_instance_valid(camera) and not camera.current:
         camera.make_current()
 
     if game_over:
-        camera_bump = move_toward(camera_bump, 0.0, delta * 0.25)
+        # Keep the impact shake active during the game-over screen instead of returning
+        # before the camera transform is updated.
+        if is_instance_valid(camera):
+            var shake_phase: float = float(Time.get_ticks_msec()) * 0.055
+            camera.position.x = player_car.position.x * 0.20 + sin(shake_phase) * camera_bump * 0.35
+            camera.position.y = 7.0 + camera_bump + cos(shake_phase * 1.37) * camera_bump * 0.18
+            camera.look_at(Vector3(player_car.position.x * 0.12, 0.9, -10.0), Vector3.UP)
+        camera_bump = move_toward(camera_bump, 0.0, delta * 0.85)
         return
 
     distance_run += world_speed * delta
@@ -71,7 +81,7 @@ func _process(delta: float) -> void:
             segment.position.z -= SEGMENT_LENGTH * SEGMENT_COUNT
 
     for prop in scenery:
-        prop.position.z += world_speed * delta * 0.94
+        prop.position.z += world_speed * delta
         if prop.position.z > 28.0:
             var side: float = -1.0 if prop.position.x < 0.0 else 1.0
             prop.position.z = -160.0 - rng.randf_range(0.0, 45.0)
@@ -131,7 +141,9 @@ func _make_environment() -> void:
     sun.light_color = Color(1.0, 0.91, 0.73)
     sun.light_energy = 1.25
     sun.shadow_enabled = true
-    sun.directional_shadow_max_distance = 85.0
+    # One shadow split is cheaper than the multi-split default on mobile GPUs.
+    sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+    sun.directional_shadow_max_distance = 65.0
     add_child(sun)
 
     camera = Camera3D.new()
@@ -161,10 +173,18 @@ func _make_ground_and_hills() -> void:
     for i in range(18):
         var side: float = -1.0 if i % 2 == 0 else 1.0
         var row: int = int(i / 2)
+        var hill_scale := Vector3(
+            rng.randf_range(8.0, 15.0),
+            rng.randf_range(4.0, 8.0),
+            rng.randf_range(13.0, 23.0)
+        )
+        # Keep the entire hill mesh outside the road, including its widest possible edge.
+        var hill_x: float = side * (ROAD_HALF_WIDTH + hill_scale.x + rng.randf_range(2.0, 18.0))
         var hill := _make_sphere(
-            Vector3(rng.randf_range(8.0, 15.0), rng.randf_range(4.0, 8.0), rng.randf_range(13.0, 23.0)),
-            Vector3(side * rng.randf_range(15.0, 43.0), rng.randf_range(2.7, 5.0), -70.0 - row * 12.0),
-            hill_colors[i % hill_colors.size()]
+            hill_scale,
+            Vector3(hill_x, rng.randf_range(2.7, 5.0), -70.0 - row * 12.0),
+            hill_colors[i % hill_colors.size()],
+            false
         )
         hill.name = "RollingHill"
         add_child(hill)
@@ -189,9 +209,9 @@ func _make_road() -> void:
         var segment := Node3D.new()
         segment.name = "RoadSegment_%02d" % i
         segment.position.z = 18.0 - float(i) * SEGMENT_LENGTH
-        _add_box(segment, Vector3(12.0, 0.22, SEGMENT_LENGTH), Vector3(0.0, -0.15, 0.0), _mat(Color(0.20, 0.23, 0.30), 0.92))
-        _add_box(segment, Vector3(0.24, 0.035, SEGMENT_LENGTH), Vector3(-5.86, -0.025, 0.0), _mat(Color(1.0, 0.82, 0.35), 0.7))
-        _add_box(segment, Vector3(0.24, 0.035, SEGMENT_LENGTH), Vector3(5.86, -0.025, 0.0), _mat(Color(1.0, 0.82, 0.35), 0.7))
+        _add_box(segment, Vector3(12.0, 0.22, SEGMENT_LENGTH), Vector3(0.0, -0.15, 0.0), _mat(Color(0.20, 0.23, 0.30), 0.92), false)
+        _add_box(segment, Vector3(0.24, 0.035, SEGMENT_LENGTH), Vector3(-5.86, -0.025, 0.0), _mat(Color(1.0, 0.82, 0.35), 0.7), false)
+        _add_box(segment, Vector3(0.24, 0.035, SEGMENT_LENGTH), Vector3(5.86, -0.025, 0.0), _mat(Color(1.0, 0.82, 0.35), 0.7), false)
 
         for dash_index in range(6):
             var dash_z: float = -SEGMENT_LENGTH * 0.42 + float(dash_index) * 6.0
@@ -199,14 +219,15 @@ func _make_road() -> void:
                 _add_box(
                     segment, Vector3(0.105, 0.035, 2.8),
                     Vector3(divider_x, -0.025, dash_z),
-                    _mat(Color(0.96, 0.97, 0.89), 0.75)
+                    _mat(Color(0.96, 0.97, 0.89), 0.75),
+                    false
                 )
 
         for curb_index in range(6):
             var curb_z: float = -SEGMENT_LENGTH * 0.42 + float(curb_index) * 6.0
             var curb_color: Color = Color(1.0, 0.36, 0.31) if curb_index % 2 == 0 else Color(1.0, 0.95, 0.81)
-            _add_box(segment, Vector3(0.28, 0.13, 2.7), Vector3(-6.08, -0.02, curb_z), _mat(curb_color, 0.7))
-            _add_box(segment, Vector3(0.28, 0.13, 2.7), Vector3(6.08, -0.02, curb_z), _mat(curb_color, 0.7))
+            _add_box(segment, Vector3(0.28, 0.13, 2.7), Vector3(-6.08, -0.02, curb_z), _mat(curb_color, 0.7), false)
+            _add_box(segment, Vector3(0.28, 0.13, 2.7), Vector3(6.08, -0.02, curb_z), _mat(curb_color, 0.7), false)
 
         add_child(segment)
         road_segments.append(segment)
@@ -242,6 +263,7 @@ func _make_tree(world_position: Vector3, style_index: int) -> Node3D:
     trunk_node.mesh = trunk
     trunk_node.position.y = trunk_height * 0.5
     trunk_node.material_override = _mat(Color(0.43, 0.25, 0.12), 0.9)
+    trunk_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
     tree.add_child(trunk_node)
 
     var leaves: Array[Color] = [
@@ -352,7 +374,7 @@ func _spawn_coin_train() -> void:
         coin.add_child(face)
         _add_sphere(coin, Vector3(0.13, 0.13, 0.13), Vector3(0.0, 0.0, -0.10), Color(1.0, 0.93, 0.41), 0.25, 0.55)
         add_child(coin)
-        coin_rows.append({"node": coin, "lane": lane})
+        coin_rows.append({"node": coin, "lane": lane, "bob_phase": rng.randf_range(0.0, TAU)})
 
 
 func _update_traffic(delta: float) -> void:
@@ -364,7 +386,11 @@ func _update_traffic(delta: float) -> void:
             car.queue_free()
             traffic.remove_at(i)
             continue
-        if int(item["lane"]) == player_lane and car.position.z > -1.2 and car.position.z < 2.1:
+        var lateral_distance: float = absf(car.position.x - player_car.position.x)
+        var longitudinal_distance: float = absf(car.position.z - player_car.position.z)
+        # The player and traffic body widths total 1.82 m; body lengths total 3.25 m.
+        # Slightly conservative bounds avoid a crash being reported before visible contact.
+        if lateral_distance <= 1.82 and longitudinal_distance <= 3.20:
             _crash()
             return
 
@@ -375,12 +401,12 @@ func _update_coins(delta: float) -> void:
         var coin: Node3D = item["node"]
         coin.position.z += world_speed * delta
         coin.rotation.y += delta * 2.8
-        coin.position.y = 1.35 + sin(distance_run * 0.12 + float(i)) * 0.10
+        coin.position.y = 1.35 + sin(distance_run * 0.12 + float(item["bob_phase"])) * 0.10
         if coin.position.z > 2.1:
             coin.queue_free()
             coin_rows.remove_at(i)
             continue
-        if int(item["lane"]) == player_lane and absf(coin.position.z) < 1.7:
+        if absf(coin.position.x - player_car.position.x) <= 1.45 and absf(coin.position.z - player_car.position.z) < 1.7:
             coins_collected += 1
             coin.queue_free()
             coin_rows.remove_at(i)
@@ -429,11 +455,25 @@ func _make_ui() -> void:
     ui.mouse_filter = Control.MOUSE_FILTER_PASS
     layer.add_child(ui)
 
+    # DisplayServer reports the usable rectangle around Android cutouts/system insets.
+    # Ratios keep the offsets correct across phones with different resolutions.
+    var safe_area := DisplayServer.get_display_safe_area()
+    var screen_size := DisplayServer.screen_get_size()
+    var safe_left: float = 0.0
+    var safe_top: float = 0.0
+    var safe_right: float = 0.0
+    var safe_bottom: float = 0.0
+    if screen_size.x > 0 and screen_size.y > 0:
+        safe_left = clampf(float(safe_area.position.x) / float(screen_size.x), 0.0, 0.10)
+        safe_top = clampf(float(safe_area.position.y) / float(screen_size.y), 0.0, 0.10)
+        safe_right = clampf(float(screen_size.x - safe_area.position.x - safe_area.size.x) / float(screen_size.x), 0.0, 0.10)
+        safe_bottom = clampf(float(screen_size.y - safe_area.position.y - safe_area.size.y) / float(screen_size.y), 0.0, 0.10)
+
     var top_panel := PanelContainer.new()
-    top_panel.anchor_left = 0.025
-    top_panel.anchor_right = 0.975
-    top_panel.anchor_top = 0.018
-    top_panel.anchor_bottom = 0.115
+    top_panel.anchor_left = 0.025 + safe_left
+    top_panel.anchor_right = 0.975 - safe_right
+    top_panel.anchor_top = 0.018 + safe_top
+    top_panel.anchor_bottom = 0.115 + safe_top
     var top_style := StyleBoxFlat.new()
     top_style.bg_color = Color(0.035, 0.11, 0.20, 0.76)
     top_style.corner_radius_top_left = 24
@@ -472,10 +512,10 @@ func _make_ui() -> void:
 
     var title := Label.new()
     title.text = "T U R B O   T R A I L S   3D"
-    title.anchor_left = 0.10
-    title.anchor_right = 0.90
-    title.anchor_top = 0.125
-    title.anchor_bottom = 0.17
+    title.anchor_left = 0.10 + safe_left
+    title.anchor_right = 0.90 - safe_right
+    title.anchor_top = 0.125 + safe_top
+    title.anchor_bottom = 0.17 + safe_top
     title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
     title.add_theme_font_size_override("font_size", 21)
@@ -487,10 +527,10 @@ func _make_ui() -> void:
 
     steering_hint = Label.new()
     steering_hint.text = "TAP LEFT / RIGHT TO CHANGE LANES"
-    steering_hint.anchor_left = 0.10
-    steering_hint.anchor_right = 0.90
-    steering_hint.anchor_top = 0.72
-    steering_hint.anchor_bottom = 0.78
+    steering_hint.anchor_left = 0.10 + safe_left
+    steering_hint.anchor_right = 0.90 - safe_right
+    steering_hint.anchor_top = 0.72 - safe_bottom
+    steering_hint.anchor_bottom = 0.78 - safe_bottom
     steering_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     steering_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
     steering_hint.add_theme_font_size_override("font_size", 19)
@@ -501,24 +541,24 @@ func _make_ui() -> void:
     ui.add_child(steering_hint)
 
     var left_button := _make_control_button("◀", Color(0.03, 0.64, 0.88, 0.83))
-    left_button.anchor_left = 0.045
-    left_button.anchor_right = 0.425
-    left_button.anchor_top = 0.81
-    left_button.anchor_bottom = 0.955
+    left_button.anchor_left = 0.045 + safe_left
+    left_button.anchor_right = 0.425 - safe_right
+    left_button.anchor_top = 0.81 - safe_bottom
+    left_button.anchor_bottom = 0.955 - safe_bottom
     left_button.pressed.connect(_steer_left)
     ui.add_child(left_button)
 
     var right_button := _make_control_button("▶", Color(0.03, 0.64, 0.88, 0.83))
-    right_button.anchor_left = 0.575
-    right_button.anchor_right = 0.955
-    right_button.anchor_top = 0.81
-    right_button.anchor_bottom = 0.955
+    right_button.anchor_left = 0.575 + safe_left
+    right_button.anchor_right = 0.955 - safe_right
+    right_button.anchor_top = 0.81 - safe_bottom
+    right_button.anchor_bottom = 0.955 - safe_bottom
     right_button.pressed.connect(_steer_right)
     ui.add_child(right_button)
 
     game_over_panel = PanelContainer.new()
-    game_over_panel.anchor_left = 0.09
-    game_over_panel.anchor_right = 0.91
+    game_over_panel.anchor_left = 0.09 + safe_left
+    game_over_panel.anchor_right = 0.91 - safe_right
     game_over_panel.anchor_top = 0.34
     game_over_panel.anchor_bottom = 0.68
     var over_style := StyleBoxFlat.new()
@@ -565,6 +605,7 @@ func _make_ui() -> void:
 func _make_control_button(text_value: String, base_color: Color) -> Button:
     var button := Button.new()
     button.text = text_value
+    button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
     button.focus_mode = Control.FOCUS_NONE
     button.add_theme_font_size_override("font_size", 44)
     button.add_theme_color_override("font_color", Color.WHITE)
@@ -638,18 +679,20 @@ func _mat(color: Color, roughness: float = 0.72, metallic: float = 0.0, emission
     return material
 
 
-func _add_box(parent: Node3D, size: Vector3, position_value: Vector3, material_value: Material) -> MeshInstance3D:
+func _add_box(parent: Node3D, size: Vector3, position_value: Vector3, material_value: Material, casts_shadow: bool = true) -> MeshInstance3D:
     var mesh := BoxMesh.new()
     mesh.size = size
     var instance := MeshInstance3D.new()
     instance.mesh = mesh
     instance.position = position_value
     instance.material_override = material_value
+    if not casts_shadow:
+        instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
     parent.add_child(instance)
     return instance
 
 
-func _make_sphere(scale_value: Vector3, position_value: Vector3, color_value: Color) -> MeshInstance3D:
+func _make_sphere(scale_value: Vector3, position_value: Vector3, color_value: Color, casts_shadow: bool = true) -> MeshInstance3D:
     var sphere_mesh := SphereMesh.new()
     sphere_mesh.radius = 1.0
     sphere_mesh.height = 2.0
@@ -660,11 +703,13 @@ func _make_sphere(scale_value: Vector3, position_value: Vector3, color_value: Co
     instance.scale = scale_value
     instance.position = position_value
     instance.material_override = _mat(color_value, 0.88)
+    if not casts_shadow:
+        instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
     return instance
 
 
-func _add_sphere(parent: Node3D, scale_value: Vector3, position_value: Vector3, color_value: Color, roughness: float = 0.82, metallic: float = 0.0) -> MeshInstance3D:
-    var instance := _make_sphere(scale_value, position_value, color_value)
+func _add_sphere(parent: Node3D, scale_value: Vector3, position_value: Vector3, color_value: Color, roughness: float = 0.82, metallic: float = 0.0, casts_shadow: bool = false) -> MeshInstance3D:
+    var instance := _make_sphere(scale_value, position_value, color_value, casts_shadow)
     instance.material_override = _mat(color_value, roughness, metallic)
     parent.add_child(instance)
     return instance

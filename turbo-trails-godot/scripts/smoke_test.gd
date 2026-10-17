@@ -53,6 +53,9 @@ func _run_smoke_test() -> void:
     if left_button == null or right_button == null:
         _fail("Touch steering buttons are missing.")
         return
+    if left_button.action_mode != BaseButton.ACTION_MODE_BUTTON_PRESS or right_button.action_mode != BaseButton.ACTION_MODE_BUTTON_PRESS:
+        _fail("Steering buttons must trigger on touch-down.")
+        return
 
     var lane_before := int(game.get("player_lane"))
     left_button.pressed.emit()
@@ -66,6 +69,35 @@ func _run_smoke_test() -> void:
     if int(game.get("player_lane")) != lane_before:
         _fail("Right steering button did not restore the original lane.")
         return
+
+    # Regression: a target lane must not cause a crash while the car is physically elsewhere.
+    var player := game.get_node_or_null("PlayerSportsCar") as Node3D
+    var collision_probe := game.call("_make_car", Color(1.0, 0.2, 0.2), false) as Node3D
+    if player == null or collision_probe == null:
+        _fail("Could not create collision regression probe.")
+        return
+    game.add_child(collision_probe)
+    game.set("player_lane", 1)
+    player.position.x = -3.8
+    collision_probe.position = Vector3(0.0, 0.0, player.position.z - 2.0)
+    var traffic_items: Array = game.get("traffic")
+    traffic_items.append({"node": collision_probe, "lane": 1})
+    game.call("_update_traffic", 0.0)
+    if bool(game.get("game_over")):
+        _fail("Lane-based collision returned: separated car positions must not crash.")
+        return
+
+    # Regression: actual overlap must crash even when the target-lane index differs.
+    traffic_items.clear()
+    game.set("player_lane", 0)
+    player.position.x = 0.0
+    collision_probe.position = Vector3(0.0, 0.0, player.position.z - 3.1)
+    traffic_items.append({"node": collision_probe, "lane": 1})
+    game.call("_update_traffic", 0.0)
+    if not bool(game.get("game_over")):
+        _fail("Real-position collision failed when the vehicle bodies overlapped.")
+        return
+    game.call("_restart")
 
     # Confirm that the game loop progresses, rather than showing a static UI.
     await create_timer(1.25).timeout
