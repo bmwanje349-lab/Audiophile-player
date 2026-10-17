@@ -156,10 +156,20 @@ func _run_smoke_test() -> void:
         _fail("Rendered viewport capture is empty or too small.")
         return
 
-    var bins: Dictionary = {}
+    # Save evidence before the visual assertion, including when the assertion fails.
+    var workspace := OS.get_environment("GITHUB_WORKSPACE")
+    if workspace.is_empty():
+        workspace = "/tmp"
+    var screenshot_path := workspace.path_join("turbo-trails-render-smoke.png")
+    var save_error := image.save_png(screenshot_path)
+    if save_error != OK:
+        _fail("Failed to save render screenshot (error %d)." % save_error)
+        return
+
+    var bins: Dictionary = {
     var world_left := int(image.get_width() * 0.12)
     var world_right := int(image.get_width() * 0.88)
-    var world_top := int(image.get_height() * 0.21)
+    var world_top := int(image.get_height() * 0.25)
     var world_bottom := int(image.get_height() * 0.70)
     var step_x := maxi(1, int(image.get_width() / 96))
     var step_y := maxi(1, int(image.get_height() / 120))
@@ -179,15 +189,6 @@ func _run_smoke_test() -> void:
 
     if bins.size() < 32 or world_contrast_samples < 80:
         _fail("Central 3D playfield is blank or visually flat (colour bins=%d, contrast samples=%d); HUD pixels are excluded." % [bins.size(), world_contrast_samples])
-        return
-
-    var workspace := OS.get_environment("GITHUB_WORKSPACE")
-    if workspace.is_empty():
-        workspace = "/tmp"
-    var screenshot_path := workspace.path_join("turbo-trails-render-smoke.png")
-    var save_error := image.save_png(screenshot_path)
-    if save_error != OK:
-        _fail("Failed to save render screenshot (error %d)." % save_error)
         return
 
     print("TURBO_TRAILS_SMOKE_PASS")
