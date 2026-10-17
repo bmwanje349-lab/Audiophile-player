@@ -29,7 +29,7 @@ class AudioGraphView @JvmOverloads constructor(
     }
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(103, 242, 194)
-        strokeWidth = dp(1.2f)
+        strokeWidth = dp(1.2f).toFloat()
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
     }
