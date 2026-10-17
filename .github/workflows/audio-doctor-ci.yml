@@ -42,7 +42,7 @@ jobs:
           python -m unittest discover -s tests -v
       - name: Check dashboard JavaScript syntax
         run: |
-          python - <<\x27PY\x27
+          python - <<PY
           import re
           from pathlib import Path
           page = Path("audio-doctor/web/index.html").read_text(encoding="utf-8")
