@@ -69,9 +69,13 @@ jobs:
           test -s "$HOME/.local/share/godot/export_templates/4.7.2.stable/android_debug.apk"
           test -s "$HOME/.local/share/godot/export_templates/4.7.2.stable/android_release.apk"
 
-      - name: Configure Godot Android SDK paths
+      - name: Configure Godot Android SDK paths and debug keystore
         run: |
-          mkdir -p "$HOME/.config/godot"
+          mkdir -p "$HOME/.config/godot" "$HOME/.android"
+          keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US"
           cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
           [gd_resource type="EditorSettings" format=3]
           [resource]
@@ -86,13 +90,18 @@ jobs:
           "$GODOT_BIN" --headless --editor --path . --import --quit
           "$GODOT_BIN" --headless --path . --quit-after 8
 
-      - name: Export Android APK
+      - name: Export signed Android APK
         working-directory: turbo-trails-godot
+        env:
+          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: ${{ github.workspace }}/../.android/debug.keystore
+          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
         run: |
           mkdir -p build
           "$GODOT_BIN" --headless --path . --export-debug "Android" build/Turbo-Trails-3D-debug.apk
           test -s build/Turbo-Trails-3D-debug.apk
           unzip -t build/Turbo-Trails-3D-debug.apk | tail -n 2
+          "$ANDROID_HOME/build-tools/35.0.1/apksigner" verify --verbose build/Turbo-Trails-3D-debug.apk
 
       - name: Upload 3D game APK
         uses: actions/upload-artifact@v4
