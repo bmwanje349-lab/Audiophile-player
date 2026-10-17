@@ -60,8 +60,8 @@ func _ready() -> void:
     # very small low-poly Gobkit proxies previously used for the roadside.
     for tree_path in [
         "res://assets/nature/mature_scots_pine_tree.glb",
-        "res://assets/nature/oak_street_tree.glb",
-        "res://assets/nature/maple_street_tree.glb"
+        "res://assets/nature/oak_detailed_leaves.glb",
+        "res://assets/nature/japanese_maple_tree.glb"
     ]:
         if ResourceLoader.exists(tree_path):
             var tree_scene := load(tree_path) as PackedScene
@@ -146,9 +146,9 @@ func _make_environment() -> void:
     var env := Environment.new()
     env.background_mode = Environment.BG_SKY
     env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-    env.ambient_light_energy = 0.85
+    env.ambient_light_energy = 0.74
     env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-    env.tonemap_exposure = 1.12
+    env.tonemap_exposure = 0.98
     env.fog_enabled = true
     env.fog_light_color = Color(0.64, 0.86, 0.98)
     env.fog_density = 0.0015
@@ -170,7 +170,7 @@ func _make_environment() -> void:
     sun.name = "Sunlight"
     sun.rotation_degrees = Vector3(-48.0, -28.0, 0.0)
     sun.light_color = Color(1.0, 0.91, 0.73)
-    sun.light_energy = 1.25
+    sun.light_energy = 1.05
     sun.shadow_enabled = true
     # One shadow split is cheaper than the multi-split default on mobile GPUs.
     sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
@@ -265,13 +265,14 @@ func _make_road() -> void:
 
 
 func _make_roadside_scenery() -> void:
-    for i in range(34):
+    # Use fewer high-detail tree instances to preserve frame time on mobile.
+    for i in range(26):
         var side: float = -1.0 if i % 2 == 0 else 1.0
         var prop := _make_tree(
             Vector3(
-                side * rng.randf_range(8.0, 14.0),
+                side * rng.randf_range(8.2, 13.5),
                 0.0,
-                -float(i) * 8.8 - rng.randf_range(0.0, 12.0)
+                -float(i) * 10.7 - rng.randf_range(0.0, 9.0)
             ),
             i
         )
@@ -291,7 +292,13 @@ func _make_tree(world_position: Vector3, style_index: int) -> Node3D:
         if imported_tree != null:
             # Models are authored at real-world dimensions: pines are ~18 m tall,
             # while the deciduous street trees are ~9 m tall.
-            var tree_scale: float = rng.randf_range(0.50, 0.60) if tree_index == 0 else rng.randf_range(0.76, 0.92)
+            var tree_scale: float
+            if tree_index == 0:
+                tree_scale = rng.randf_range(0.50, 0.60)
+            elif tree_index == 2:
+                tree_scale = rng.randf_range(0.98, 1.18)
+            else:
+                tree_scale = rng.randf_range(0.76, 0.92)
             imported_tree.scale = Vector3.ONE * tree_scale
             imported_tree.rotation.y = rng.randf_range(-PI, PI)
             tree.add_child(imported_tree)
@@ -606,11 +613,12 @@ func _make_ui() -> void:
     steering_hint.text = "TAP LEFT / RIGHT TO CHANGE LANES"
     steering_hint.anchor_left = 0.10 + safe_left
     steering_hint.anchor_right = 0.90 - safe_right
-    steering_hint.anchor_top = 0.72 - safe_bottom
-    steering_hint.anchor_bottom = 0.78 - safe_bottom
+    # Keep the steering guide below the title; never paint text over the player car.
+    steering_hint.anchor_top = 0.205 + safe_top
+    steering_hint.anchor_bottom = 0.242 + safe_top
     steering_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     steering_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-    steering_hint.add_theme_font_size_override("font_size", 19)
+    steering_hint.add_theme_font_size_override("font_size", 15)
     steering_hint.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.94))
     steering_hint.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.9))
     steering_hint.add_theme_constant_override("shadow_offset_x", 2)
@@ -620,16 +628,16 @@ func _make_ui() -> void:
     var left_button := _make_control_button("◀", Color(0.03, 0.64, 0.88, 0.83))
     left_button.anchor_left = 0.045 + safe_left
     left_button.anchor_right = 0.425 - safe_right
-    left_button.anchor_top = 0.81 - safe_bottom
-    left_button.anchor_bottom = 0.955 - safe_bottom
+    left_button.anchor_top = 0.90 - safe_bottom
+    left_button.anchor_bottom = 0.99 - safe_bottom
     left_button.pressed.connect(_steer_left)
     ui.add_child(left_button)
 
     var right_button := _make_control_button("▶", Color(0.03, 0.64, 0.88, 0.83))
     right_button.anchor_left = 0.575 + safe_left
     right_button.anchor_right = 0.955 - safe_right
-    right_button.anchor_top = 0.81 - safe_bottom
-    right_button.anchor_bottom = 0.955 - safe_bottom
+    right_button.anchor_top = 0.90 - safe_bottom
+    right_button.anchor_bottom = 0.99 - safe_bottom
     right_button.pressed.connect(_steer_right)
     ui.add_child(right_button)
 
@@ -742,7 +750,8 @@ func _update_hud() -> void:
 func _get_grass_material() -> StandardMaterial3D:
     if grass_material_cache != null:
         return grass_material_cache
-    var grass := _mat(Color(0.94, 0.98, 0.90), 0.96)
+    # A slightly deeper green tint counters overexposed beige speckling outdoors.
+    var grass := _mat(Color(0.60, 0.82, 0.43), 0.98)
     if ResourceLoader.exists("res://assets/textures/sparse_grass_diffuse.jpg"):
         grass.albedo_texture = load("res://assets/textures/sparse_grass_diffuse.jpg") as Texture2D
     if ResourceLoader.exists("res://assets/textures/sparse_grass_normal.jpg"):
@@ -751,7 +760,7 @@ func _get_grass_material() -> StandardMaterial3D:
     if ResourceLoader.exists("res://assets/textures/sparse_grass_roughness.jpg"):
         grass.roughness_texture = load("res://assets/textures/sparse_grass_roughness.jpg") as Texture2D
     # Repeat the 1K PBR tile across the large terrain plane instead of stretching it.
-    grass.uv1_scale = Vector3(48.0, 1.0, 112.0)
+    grass.uv1_scale = Vector3(32.0, 1.0, 76.0)
     grass_material_cache = grass
     return grass_material_cache
 
