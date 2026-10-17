@@ -89,14 +89,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p assets/vehicles assets/textures
-          # Detailed Spectral GT RS sports car, dedicated CC0 1.0 by its author.
+          mkdir -p assets/vehicles assets/nature assets/textures
+          # Detailed hero sports car, dedicated CC0 1.0 by its author.
           curl --fail --location --retry 3 --retry-delay 2 "https://raw.githubusercontent.com/JaronKBragg7337/spectral-gt-rs/main/spectral_gt_rs_game_ready.glb" -o assets/vehicles/spectral_gt_rs_game_ready.glb
           test "$(stat -c %s assets/vehicles/spectral_gt_rs_game_ready.glb)" -gt 1000000
-          # Standalone CC0 nature props from Gobkit's open Nature Kit.
-          mkdir -p assets/nature
-          for model in TreeMed001 TreeMed002 TreeHigh001; do
-            curl --fail --location --retry 3 --retry-delay 2 "https://raw.githubusercontent.com/Ariescar/gobkit-free-assets/main/nature/$model.glb" -o "assets/nature/$model.glb"
+          # Distinct, real-scale CC0 hatchback and sedan for traffic variety.
+          curl --fail --location --retry 3 --retry-delay 2 "https://www.innerscene.com/api/library/sedan-car-42109739/download" -o assets/vehicles/sedan_car.glb
+          curl --fail --location --retry 3 --retry-delay 2 "https://www.innerscene.com/api/library/silver-five-door-compact-hatchback-6bf4a878/download" -o assets/vehicles/hatchback_car.glb
+          for model in assets/vehicles/sedan_car.glb assets/vehicles/hatchback_car.glb; do
+            test "$(stat -c %s "$model")" -gt 400000
+            test "$(head -c 4 "$model")" = "glTF"
+          done
+          # Higher-detail CC0 landscape trees replace the low-poly tree proxies.
+          curl --fail --location --retry 3 --retry-delay 2 "https://www.innerscene.com/api/library/mature-scots-pine-tree-280307e1/download" -o assets/nature/mature_scots_pine_tree.glb
+          curl --fail --location --retry 3 --retry-delay 2 "https://www.innerscene.com/api/library/oak-street-tree-light-canopy-a469b6df/download" -o assets/nature/oak_street_tree.glb
+          curl --fail --location --retry 3 --retry-delay 2 "https://www.innerscene.com/api/library/maple-street-tree-light-canopy-867d03d7/download" -o assets/nature/maple_street_tree.glb
+          for model in assets/nature/*.glb; do
+            test "$(stat -c %s "$model")" -gt 100000
+            test "$(head -c 4 "$model")" = "glTF"
           done
           # Poly Haven Asphalt Track PBR texture maps, downloaded at mobile-friendly 1K.
           curl --fail --location --retry 3 --retry-delay 2 -H "User-Agent: TurboTrails3D-AssetImporter/1.0" "https://api.polyhaven.com/files/asphalt_track" -o "$RUNNER_TEMP/asphalt-track-files.json"
@@ -107,17 +117,33 @@ jobs:
           curl --fail --location --retry 3 --retry-delay 2 "$DIFFUSE_URL" -o assets/textures/asphalt_track_diffuse.jpg
           if [ -n "$NORMAL_URL" ]; then curl --fail --location --retry 3 --retry-delay 2 "$NORMAL_URL" -o assets/textures/asphalt_track_normal.jpg; fi
           if [ -n "$ROUGH_URL" ]; then curl --fail --location --retry 3 --retry-delay 2 "$ROUGH_URL" -o assets/textures/asphalt_track_roughness.jpg; fi
+          # Poly Haven Sparse Grass PBR maps make the terrain physically textured too.
+          curl --fail --location --retry 3 --retry-delay 2 -H "User-Agent: TurboTrails3D-AssetImporter/1.0" "https://api.polyhaven.com/files/sparse_grass" -o "$RUNNER_TEMP/sparse-grass-files.json"
+          GRASS_DIFFUSE_URL="$(jq -r '.Diffuse["1k"].jpg.url // .diffuse["1k"].jpg.url // empty' "$RUNNER_TEMP/sparse-grass-files.json")"
+          GRASS_NORMAL_URL="$(jq -r '.nor_gl["1k"].jpg.url // .nor_gl["1k"].png.url // .NormalGL["1k"].jpg.url // empty' "$RUNNER_TEMP/sparse-grass-files.json")"
+          GRASS_ROUGH_URL="$(jq -r '.Rough["1k"].jpg.url // .rough["1k"].jpg.url // empty' "$RUNNER_TEMP/sparse-grass-files.json")"
+          test -n "$GRASS_DIFFUSE_URL"
+          curl --fail --location --retry 3 --retry-delay 2 "$GRASS_DIFFUSE_URL" -o assets/textures/sparse_grass_diffuse.jpg
+          if [ -n "$GRASS_NORMAL_URL" ]; then curl --fail --location --retry 3 --retry-delay 2 "$GRASS_NORMAL_URL" -o assets/textures/sparse_grass_normal.jpg; fi
+          if [ -n "$GRASS_ROUGH_URL" ]; then curl --fail --location --retry 3 --retry-delay 2 "$GRASS_ROUGH_URL" -o assets/textures/sparse_grass_roughness.jpg; fi
+          test "$(stat -c %s assets/textures/sparse_grass_diffuse.jpg)" -gt 100000
           cat > assets/ASSET_CREDITS.md <<'EOF'
           # Turbo Trails 3D — third-party assets
-          - Spectral GT RS detailed sports car: JaronKBragg7337, CC0 1.0 Universal.
+          - Spectral GT RS hero sports car: JaronKBragg7337, CC0 1.0 Universal.
             Source: https://github.com/JaronKBragg7337/spectral-gt-rs
-          - Asphalt Track PBR maps: Poly Haven, CC0.
-            Source: https://polyhaven.com/a/asphalt_track
-          - Nature Kit trees: Gobkit free assets, CC0 1.0.
-            Source: https://github.com/Ariescar/gobkit-free-assets
-          - Assets are downloaded during the Android build and packed into the APK.
+          - Sedan and compact hatchback traffic cars: Innerscene original GLB assets, CC0 public domain.
+            Sources: https://www.innerscene.com/tools/library/3d-parts/sedan-car-42109739
+            https://www.innerscene.com/tools/library/3d-parts/silver-five-door-compact-hatchback-6bf4a878
+          - Mature Scots pine, oak street tree, and maple street tree: Innerscene original GLB assets, CC0 public domain.
+            Sources: https://www.innerscene.com/tools/library/3d-parts/mature-scots-pine-tree-280307e1
+            https://www.innerscene.com/tools/library/3d-parts/oak-street-tree-light-canopy-a469b6df
+            https://www.innerscene.com/tools/library/3d-parts/maple-street-tree-light-canopy-867d03d7
+          - Asphalt Track and Sparse Grass PBR textures: Poly Haven, CC0.
+            Sources: https://polyhaven.com/a/asphalt_track
+            https://polyhaven.com/a/sparse_grass
+          - Models and textures are downloaded by the build and packed into the Android APK.
           EOF
-          du -h assets/vehicles/* assets/textures/*
+          du -h assets/vehicles/* assets/nature/* assets/textures/*
 
       - name: Validate project and GDScript
         working-directory: turbo-trails-godot
