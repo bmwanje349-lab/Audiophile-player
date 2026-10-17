@@ -197,28 +197,7 @@ func _make_ground_and_hills() -> void:
     ground.material_override = _get_grass_material()
     add_child(ground)
 
-    var hill_colors: Array[Color] = [
-        Color(0.17, 0.68, 0.36), Color(0.29, 0.78, 0.40),
-        Color(0.12, 0.59, 0.37), Color(0.43, 0.80, 0.39)
-    ]
-    for i in range(18):
-        var side: float = -1.0 if i % 2 == 0 else 1.0
-        var row: int = int(i / 2)
-        var hill_scale := Vector3(
-            rng.randf_range(8.0, 15.0),
-            rng.randf_range(4.0, 8.0),
-            rng.randf_range(13.0, 23.0)
-        )
-        # Keep the entire hill mesh outside the road, including its widest possible edge.
-        var hill_x: float = side * (ROAD_HALF_WIDTH + hill_scale.x + rng.randf_range(2.0, 18.0))
-        var hill := _make_sphere(
-            hill_scale,
-            Vector3(hill_x, rng.randf_range(2.7, 5.0), -70.0 - row * 12.0),
-            hill_colors[i % hill_colors.size()],
-            false
-        )
-        hill.name = "RollingHill"
-        add_child(hill)
+    _make_terrain_banks()
 
     for i in range(8):
         var cloud_root := Node3D.new()
@@ -233,6 +212,76 @@ func _make_ground_and_hills() -> void:
         _add_sphere(cloud_root, Vector3(3.5, 1.9, 2.0), Vector3(-3.2, -0.1, 0.0), cloud_color)
         _add_sphere(cloud_root, Vector3(3.8, 1.5, 2.1), Vector3(3.0, -0.25, 0.3), cloud_color)
         add_child(cloud_root)
+
+
+
+func _make_terrain_banks() -> void:
+    # Two smooth terrain meshes replace the giant sphere hills. A seeded, low-
+    # frequency noise field makes natural rolling banks while leaving the road
+    # shoulder and tree roots level. The shared grass PBR material keeps this
+    # detail inexpensive on mobile GPUs.
+    var terrain_noise := FastNoiseLite.new()
+    terrain_noise.seed = rng.randi()
+    terrain_noise.frequency = 0.016
+    terrain_noise.fractal_octaves = 4
+    terrain_noise.fractal_gain = 0.48
+    _make_terrain_bank(-1.0, terrain_noise)
+    _make_terrain_bank(1.0, terrain_noise)
+
+
+func _make_terrain_bank(side: float, terrain_noise: FastNoiseLite) -> void:
+    const X_SEGMENTS: int = 36
+    const Z_SEGMENTS: int = 100
+    var vertices := PackedVector3Array()
+    var uvs := PackedVector2Array()
+    var indices := PackedInt32Array()
+
+    for zi in range(Z_SEGMENTS + 1):
+        var z_amount: float = float(zi) / float(Z_SEGMENTS)
+        var z: float = lerpf(24.0, -360.0, z_amount)
+        for xi in range(X_SEGMENTS + 1):
+            var x_amount: float = float(xi) / float(X_SEGMENTS)
+            var x_abs: float = lerpf(6.42, 92.0, x_amount)
+            var rise: float = smoothstep(14.0, 29.0, x_abs)
+            var outer_fade: float = 1.0 - smoothstep(76.0, 92.0, x_abs)
+            var ridge_amount: float = clampf((x_abs - 10.0) / 82.0, 0.0, 1.0)
+            var ridge_shape: float = sin(ridge_amount * PI)
+            var noise_height: float = terrain_noise.get_noise_2d(side * x_abs, z) * 1.2
+            var height: float = rise * outer_fade * maxf(0.0, ridge_shape * 4.0 + noise_height)
+            vertices.append(Vector3(side * x_abs, -0.32 + height, z))
+            # World-space scaling gives the same natural grass tile size on both banks.
+            uvs.append(Vector2(x_abs / 8.0, z / 8.0))
+
+    for zi in range(Z_SEGMENTS):
+        for xi in range(X_SEGMENTS):
+            var a: int = zi * (X_SEGMENTS + 1) + xi
+            var b: int = a + 1
+            var c: int = a + X_SEGMENTS + 1
+            var d: int = c + 1
+            if side > 0.0:
+                indices.append_array(PackedInt32Array([a, b, c, b, d, c]))
+            else:
+                indices.append_array(PackedInt32Array([a, c, b, b, c, d]))
+
+    var surface := SurfaceTool.new()
+    surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+    for i in range(vertices.size()):
+        surface.set_uv(uvs[i])
+        surface.add_vertex(vertices[i])
+    for index_value in indices:
+        surface.add_index(index_value)
+    surface.generate_normals()
+    var terrain_mesh := surface.commit()
+    if terrain_mesh == null:
+        push_warning("Could not create rolling terrain mesh; retaining the flat PBR ground.")
+        return
+
+    var terrain := MeshInstance3D.new()
+    terrain.name = "RollingTerrainBank_Left" if side < 0.0 else "RollingTerrainBank_Right"
+    terrain.mesh = terrain_mesh
+    terrain.material_override = _get_grass_material()
+    terrain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    add_child(terrain)
 
 
 func _make_road() -> void:
@@ -606,7 +655,7 @@ func _make_ui() -> void:
     asset_credit.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     asset_credit.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
     asset_credit.add_theme_font_size_override("font_size", 11)
-    asset_credit.add_theme_color_override("font_color", Color(0.86, 0.95, 1.0, 0.88))
+    asset_credit.add_theme_color_override("font_color", Color(0.10, 0.24, 0.32, 0.94))
     ui.add_child(asset_credit)
 
     steering_hint = Label.new()
