@@ -52,6 +52,11 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+    # Some Android surface/activity transitions can reset the active camera.
+    # Reassert it so the scene cannot silently render without a view camera.
+    if is_instance_valid(camera) and not camera.current:
+        camera.make_current()
+
     if game_over:
         camera_bump = move_toward(camera_bump, 0.0, delta * 0.25)
         return
@@ -133,9 +138,10 @@ func _make_environment() -> void:
     camera.name = "FollowCamera"
     camera.position = Vector3(0.0, 7.0, 12.0)
     camera.fov = 62.0
-    camera.current = true
     add_child(camera)
     camera.look_at(Vector3(0.0, 0.9, -10.0), Vector3.UP)
+    # Make the camera current only after it belongs to the active scene tree.
+    camera.make_current()
 
 
 func _make_ground_and_hills() -> void:
@@ -583,6 +589,19 @@ func _make_control_button(text_value: String, base_color: Color) -> Button:
     button.add_theme_stylebox_override("pressed", pressed)
     button.add_theme_stylebox_override("focus", normal)
     return button
+
+
+func _unhandled_input(event: InputEvent) -> void:
+    # Keyboard controls make the game testable on desktop as well as touch devices.
+    if game_over or not (event is InputEventKey):
+        return
+    var key_event := event as InputEventKey
+    if not key_event.pressed or key_event.echo:
+        return
+    if key_event.keycode == KEY_LEFT or key_event.keycode == KEY_A:
+        _steer_left()
+    elif key_event.keycode == KEY_RIGHT or key_event.keycode == KEY_D:
+        _steer_right()
 
 
 func _steer_left() -> void:
