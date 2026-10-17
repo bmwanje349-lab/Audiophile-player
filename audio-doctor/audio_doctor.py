@@ -226,7 +226,8 @@ def analyze_samples(x: np.ndarray, sr: int) -> dict[str, Any]:
     corr=round(float(np.corrcoef(left,right)[0,1]),4) if len(left)>1 and np.std(left)>1e-12 and np.std(right)>1e-12 else None
     mono=(left+right)*.5
     mono_rms=math.sqrt(max(0.0,float(np.dot(mono,mono))/max(1,len(mono))))
-    channel_rms=(math.sqrt(max(0.0,float(np.dot(left,left))/max(1,len(left))))+math.sqrt(max(0.0,float(np.dot(right,right))/max(1,len(right))))/2
+    channel_rms = (math.sqrt(max(0.0, float(np.dot(left, left)) / max(1, len(left)))) +
+                   math.sqrt(max(0.0, float(np.dot(right, right)) / max(1, len(right))))) / 2
     return {
         "duration_seconds":round(duration,3),"decoded_sample_rate_hz":sr,"decoded_channels":2,
         "sample_peak_dbfs":peak_db,"channel_peak_dbfs":peaks,"rms_level_dbfs":rms_db,
