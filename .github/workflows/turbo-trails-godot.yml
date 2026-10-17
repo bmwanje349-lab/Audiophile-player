@@ -1,0 +1,103 @@
+name: Turbo Trails 3D Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - colorful-arcade-game
+    paths:
+      - "turbo-trails-godot/**"
+      - ".github/workflows/turbo-trails-godot.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    name: Validate 3D game and export Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GODOT_VERSION: "4.7.2"
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - name: Checkout game source
+        uses: actions/checkout@v4
+
+      - name: Install Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.1" "cmdline-tools;latest"
+
+      - name: Download Godot 4.7.2 editor
+        run: |
+          mkdir -p "$RUNNER_TEMP/godot-editor"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip" \
+            -o "$RUNNER_TEMP/godot-editor.zip"
+          unzip -q "$RUNNER_TEMP/godot-editor.zip" -d "$RUNNER_TEMP/godot-editor"
+          find "$RUNNER_TEMP/godot-editor" -maxdepth 2 -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -exec chmod +x {} \;
+          echo "GODOT_BIN=$(find "$RUNNER_TEMP/godot-editor" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)" >> "$GITHUB_ENV"
+
+      - name: Restore Android export templates
+        id: godot-template-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/godot/export_templates/4.7.2.stable
+          key: godot-4.7.2-stable-android-templates-v1
+
+      - name: Download Android export templates
+        if: steps.godot-template-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz" \
+            -o "$RUNNER_TEMP/godot-export-templates.tpz"
+          unzip -p "$RUNNER_TEMP/godot-export-templates.tpz" templates/android_debug.apk \
+            > "$HOME/.local/share/godot/export_templates/4.7.2.stable/android_debug.apk"
+          unzip -p "$RUNNER_TEMP/godot-export-templates.tpz" templates/android_release.apk \
+            > "$HOME/.local/share/godot/export_templates/4.7.2.stable/android_release.apk"
+          unzip -p "$RUNNER_TEMP/godot-export-templates.tpz" templates/android_source.zip \
+            > "$HOME/.local/share/godot/export_templates/4.7.2.stable/android_source.zip"
+          test -s "$HOME/.local/share/godot/export_templates/4.7.2.stable/android_debug.apk"
+          test -s "$HOME/.local/share/godot/export_templates/4.7.2.stable/android_release.apk"
+
+      - name: Configure Godot Android SDK paths
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+          [resource]
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          EOF
+
+      - name: Validate project and GDScript
+        working-directory: turbo-trails-godot
+        run: |
+          "$GODOT_BIN" --version
+          "$GODOT_BIN" --headless --editor --path . --import --quit
+          "$GODOT_BIN" --headless --path . --quit-after 8
+
+      - name: Export Android APK
+        working-directory: turbo-trails-godot
+        run: |
+          mkdir -p build
+          "$GODOT_BIN" --headless --path . --export-debug "Android" build/Turbo-Trails-3D-debug.apk
+          test -s build/Turbo-Trails-3D-debug.apk
+          unzip -t build/Turbo-Trails-3D-debug.apk | tail -n 2
+
+      - name: Upload 3D game APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Turbo-Trails-3D-debug-APK
+          path: turbo-trails-godot/build/Turbo-Trails-3D-debug.apk
+          if-no-files-found: error
+          retention-days: 14
