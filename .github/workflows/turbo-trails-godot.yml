@@ -117,16 +117,26 @@ jobs:
           curl --fail --location --retry 3 --retry-delay 2 "$DIFFUSE_URL" -o assets/textures/asphalt_track_diffuse.jpg
           if [ -n "$NORMAL_URL" ]; then curl --fail --location --retry 3 --retry-delay 2 "$NORMAL_URL" -o assets/textures/asphalt_track_normal.jpg; fi
           if [ -n "$ROUGH_URL" ]; then curl --fail --location --retry 3 --retry-delay 2 "$ROUGH_URL" -o assets/textures/asphalt_track_roughness.jpg; fi
-          # Poly Haven Sparse Grass PBR maps make the terrain physically textured too.
-          curl --fail --location --retry 3 --retry-delay 2 -H "User-Agent: TurboTrails3D-AssetImporter/1.0" "https://api.polyhaven.com/files/sparse_grass" -o "$RUNNER_TEMP/sparse-grass-files.json"
-          GRASS_DIFFUSE_URL="$(jq -r '.Diffuse["1k"].jpg.url // .diffuse["1k"].jpg.url // empty' "$RUNNER_TEMP/sparse-grass-files.json")"
-          GRASS_NORMAL_URL="$(jq -r '.nor_gl["1k"].jpg.url // .nor_gl["1k"].png.url // .NormalGL["1k"].jpg.url // empty' "$RUNNER_TEMP/sparse-grass-files.json")"
-          GRASS_ROUGH_URL="$(jq -r '.Rough["1k"].jpg.url // .rough["1k"].jpg.url // empty' "$RUNNER_TEMP/sparse-grass-files.json")"
+          # Poly Haven Leafy Grass PBR texture. Deliberately omit its fine normal map:
+          # distant grass normal detail sparkles/aliases in a fast racing-camera view.
+          curl --fail --location --retry 3 --retry-delay 2 -H "User-Agent: TurboTrails3D-AssetImporter/1.0" "https://api.polyhaven.com/files/leafy_grass" -o "$RUNNER_TEMP/leafy-grass-files.json"
+          GRASS_DIFFUSE_URL="$(jq -r '.Diffuse["1k"].jpg.url // .diffuse["1k"].jpg.url // empty' "$RUNNER_TEMP/leafy-grass-files.json")"
+          GRASS_ROUGH_URL="$(jq -r '.Rough["1k"].jpg.url // .rough["1k"].jpg.url // empty' "$RUNNER_TEMP/leafy-grass-files.json")"
           test -n "$GRASS_DIFFUSE_URL"
-          curl --fail --location --retry 3 --retry-delay 2 "$GRASS_DIFFUSE_URL" -o assets/textures/sparse_grass_diffuse.jpg
-          if [ -n "$GRASS_NORMAL_URL" ]; then curl --fail --location --retry 3 --retry-delay 2 "$GRASS_NORMAL_URL" -o assets/textures/sparse_grass_normal.jpg; fi
-          if [ -n "$GRASS_ROUGH_URL" ]; then curl --fail --location --retry 3 --retry-delay 2 "$GRASS_ROUGH_URL" -o assets/textures/sparse_grass_roughness.jpg; fi
-          test "$(stat -c %s assets/textures/sparse_grass_diffuse.jpg)" -gt 100000
+          curl --fail --location --retry 3 --retry-delay 2 "$GRASS_DIFFUSE_URL" -o assets/textures/leafy_grass_diffuse.jpg
+          if [ -n "$GRASS_ROUGH_URL" ]; then curl --fail --location --retry 3 --retry-delay 2 "$GRASS_ROUGH_URL" -o assets/textures/leafy_grass_roughness.jpg; fi
+          test "$(stat -c %s assets/textures/leafy_grass_diffuse.jpg)" -gt 100000
+          # Clear CC0 pure-sky HDRI replaces the fake low-poly cloud meshes.
+          curl --fail --location --retry 3 --retry-delay 2 -H "User-Agent: TurboTrails3D-AssetImporter/1.0" "https://api.polyhaven.com/files/autumn_field_puresky" -o "$RUNNER_TEMP/autumn-field-sky-files.json"
+          SKY_URL="$(jq -r '.hdri["1k"].hdr.url // empty' "$RUNNER_TEMP/autumn-field-sky-files.json")"
+          SKY_EXT=hdr
+          if [ -z "$SKY_URL" ]; then
+            SKY_URL="$(jq -r '.hdri["1k"].exr.url // empty' "$RUNNER_TEMP/autumn-field-sky-files.json")"
+            SKY_EXT=exr
+          fi
+          test -n "$SKY_URL"
+          curl --fail --location --retry 3 --retry-delay 2 "$SKY_URL" -o "assets/textures/autumn_field_puresky.$SKY_EXT"
+          test "$(stat -c %s "assets/textures/autumn_field_puresky.$SKY_EXT")" -gt 100000
           cat > assets/ASSET_CREDITS.md <<'EOF'
           # Turbo Trails 3D — third-party assets
           - Spectral GT RS hero sports car: JaronKBragg7337, CC0 1.0 Universal.
@@ -138,9 +148,12 @@ jobs:
             Sources: https://www.innerscene.com/tools/library/3d-parts/mature-scots-pine-tree-280307e1
             https://www.innerscene.com/tools/library/3d-parts/oak-street-tree-detailed-leaves-a273fef9
             https://www.innerscene.com/tools/library/3d-parts/japanese-maple-tree-565c1604
-          - Asphalt Track and Sparse Grass PBR textures: Poly Haven, CC0.
+          - Asphalt Track and Leafy Grass PBR textures: Poly Haven, CC0.
             Sources: https://polyhaven.com/a/asphalt_track
-            https://polyhaven.com/a/sparse_grass
+            https://polyhaven.com/a/leafy_grass
+          - Autumn Field (Pure Sky) 1K HDRI panorama: Poly Haven, CC0.
+            Source: https://polyhaven.com/a/autumn_field_puresky
+          - The game credits Poly Haven on the in-game HUD.
           - Models and textures are downloaded by the build and packed into the Android APK.
           EOF
           du -h assets/vehicles/* assets/nature/* assets/textures/*
