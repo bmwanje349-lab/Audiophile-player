@@ -75,9 +75,7 @@ class MainActivity : Activity() {
         val pageColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        scroll.addView(pageColumn, ScrollView.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
+        scroll.addView(pageColumn)
         setContentView(scroll)
 
         val brandRow = LinearLayout(this).apply {
@@ -310,7 +308,7 @@ class MainActivity : Activity() {
         )
         for (pair in items.chunked(2)) {
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            row.addView(metricCard(pair[0]), LinearLayout.LayoutParams(0, -1, 1f).apply { marginEnd = dp(6) })
+            row.addView(metricCard(pair[0]), LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
             if (pair.size > 1) {
                 row.addView(metricCard(pair[1]), LinearLayout.LayoutParams(0, -1, 1f).apply { marginStart = dp(6) })
             } else {
