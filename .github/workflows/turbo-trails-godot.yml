@@ -123,3 +123,11 @@ jobs:
           path: turbo-trails-godot/build/Turbo-Trails-3D-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload actual rendered-frame evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: Turbo-Trails-render-smoke
+          path: turbo-trails-render-smoke.png
+          if-no-files-found: error
+          retention-days: 14
