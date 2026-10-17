@@ -177,8 +177,8 @@ public class MainActivity extends Activity {
         }
 
         private float roadCenterX(float lane, float z) {
-            float roadWidth = w*.22f + (w*.455f-w*.11f)*z;
-            return w*.5f + (lane-1f) * roadWidth/3f;
+            float halfRoadWidth = w*.11f + (w*.455f-w*.11f)*z;
+            return w*.5f + (lane-1f) * halfRoadWidth*2f/3f;
         }
 
         private void drawObjects(Canvas c) {
