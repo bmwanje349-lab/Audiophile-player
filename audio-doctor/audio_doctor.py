@@ -187,7 +187,7 @@ def _spectral_cliff(x: np.ndarray, sr: int) -> dict[str, Any]:
         return {"estimated_cutoff_hz":None,"confidence":"low","method":"spectral heuristic"}
     mono = (x[:min(len(x),262144),0]+x[:min(len(x),262144),1])*.5
     size = 1
-    while size < len(mono): size *= 2
+    while size * 2 <= len(mono): size *= 2
     size = min(size,262144)
     mag = np.abs(np.fft.rfft(mono[:size]*np.hanning(size)))
     freq = np.fft.rfftfreq(size,1/sr)
