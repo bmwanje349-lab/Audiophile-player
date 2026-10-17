@@ -16,7 +16,9 @@ var rng := RandomNumberGenerator.new()
 var material_cache: Dictionary = {}
 var road_material_cache: StandardMaterial3D
 var detailed_car_scene: PackedScene
+var traffic_car_scenes: Array[PackedScene] = []
 var nature_tree_scenes: Array[PackedScene] = []
+var grass_material_cache: StandardMaterial3D
 var road_segments: Array[Node3D] = []
 var traffic: Array[Dictionary] = []
 var coin_rows: Array[Dictionary] = []
@@ -44,10 +46,22 @@ func _ready() -> void:
     rng.randomize()
     if ResourceLoader.exists("res://assets/vehicles/spectral_gt_rs_game_ready.glb"):
         detailed_car_scene = load("res://assets/vehicles/spectral_gt_rs_game_ready.glb") as PackedScene
+    if detailed_car_scene != null:
+        traffic_car_scenes.append(detailed_car_scene)
+    for vehicle_path in [
+        "res://assets/vehicles/sedan_car.glb",
+        "res://assets/vehicles/hatchback_car.glb"
+    ]:
+        if ResourceLoader.exists(vehicle_path):
+            var vehicle_scene := load(vehicle_path) as PackedScene
+            if vehicle_scene != null:
+                traffic_car_scenes.append(vehicle_scene)
+    # These CC0 trees have full branching and natural silhouettes rather than the
+    # very small low-poly Gobkit proxies previously used for the roadside.
     for tree_path in [
-        "res://assets/nature/TreeMed001.glb",
-        "res://assets/nature/TreeMed002.glb",
-        "res://assets/nature/TreeHigh001.glb"
+        "res://assets/nature/mature_scots_pine_tree.glb",
+        "res://assets/nature/oak_street_tree.glb",
+        "res://assets/nature/maple_street_tree.glb"
     ]:
         if ResourceLoader.exists(tree_path):
             var tree_scene := load(tree_path) as PackedScene
@@ -70,8 +84,12 @@ func _process(delta: float) -> void:
 
     # Some Android surface/activity transitions can reset the active camera.
     # Reassert it so the scene cannot silently render without a view camera.
-    if is_instance_valid(camera) and not camera.current:
-        camera.make_current()
+    if is_instance_valid(camera):
+        var active_viewport := camera.get_viewport()
+        # "current" alone can be stale after Android surface/activity recreation;
+        # verify the actual viewport camera to prevent a silently blank 3D world.
+        if active_viewport != null and active_viewport.get_camera_3d() != camera:
+            camera.make_current()
 
     if game_over:
         # Keep the impact shake active during the game-over screen instead of returning
@@ -79,8 +97,8 @@ func _process(delta: float) -> void:
         if is_instance_valid(camera):
             var shake_phase: float = float(Time.get_ticks_msec()) * 0.055
             camera.position.x = player_car.position.x * 0.20 + sin(shake_phase) * camera_bump * 0.35
-            camera.position.y = 7.0 + camera_bump + cos(shake_phase * 1.37) * camera_bump * 0.18
-            camera.look_at(Vector3(player_car.position.x * 0.12, 0.9, -10.0), Vector3.UP)
+            camera.position.y = 6.2 + camera_bump + cos(shake_phase * 1.37) * camera_bump * 0.18
+            camera.look_at(Vector3(player_car.position.x * 0.12, 0.65, -25.0), Vector3.UP)
         camera_bump = move_toward(camera_bump, 0.0, delta * 0.85)
         return
 
@@ -106,7 +124,7 @@ func _process(delta: float) -> void:
     var steer_offset: float = LANE_X[player_lane] - player_car.position.x
     player_car.rotation.z = clampf(-steer_offset * 0.045, -0.10, 0.10)
     camera.position.x = lerpf(camera.position.x, player_car.position.x * 0.20, delta * 2.0)
-    camera.position.y = 7.0 + sin(distance_run * 0.035) * 0.055 + camera_bump
+    camera.position.y = 6.2 + sin(distance_run * 0.035) * 0.055 + camera_bump
     camera.look_at(Vector3(player_car.position.x * 0.12, 0.9, -10.0), Vector3.UP)
 
     traffic_timer -= delta
@@ -161,10 +179,10 @@ func _make_environment() -> void:
 
     camera = Camera3D.new()
     camera.name = "FollowCamera"
-    camera.position = Vector3(0.0, 7.0, 12.0)
+    camera.position = Vector3(0.0, 6.2, 13.0)
     camera.fov = 62.0
     add_child(camera)
-    camera.look_at(Vector3(0.0, 0.9, -10.0), Vector3.UP)
+    camera.look_at(Vector3(0.0, 0.65, -25.0), Vector3.UP)
     # Make the camera current only after it belongs to the active scene tree.
     camera.make_current()
 
@@ -176,7 +194,7 @@ func _make_ground_and_hills() -> void:
     ground.name = "EndlessGreenGround"
     ground.mesh = ground_mesh
     ground.position = Vector3(0.0, -0.34, -120.0)
-    ground.material_override = _mat(Color(0.16, 0.66, 0.30), 0.95)
+    ground.material_override = _get_grass_material()
     add_child(ground)
 
     var hill_colors: Array[Color] = [
@@ -267,10 +285,15 @@ func _make_tree(world_position: Vector3, style_index: int) -> Node3D:
     tree.position = world_position
 
     if not nature_tree_scenes.is_empty():
-        var selected_scene: PackedScene = nature_tree_scenes[posmod(style_index, nature_tree_scenes.size())]
+        var tree_index: int = posmod(style_index, nature_tree_scenes.size())
+        var selected_scene: PackedScene = nature_tree_scenes[tree_index]
         var imported_tree := selected_scene.instantiate() as Node3D
         if imported_tree != null:
-            imported_tree.scale = Vector3.ONE * rng.randf_range(2.1, 3.1)
+            # Models are authored at real-world dimensions: pines are ~18 m tall,
+            # while the deciduous street trees are ~9 m tall.
+            var tree_scale: float = rng.randf_range(0.50, 0.60) if tree_index == 0 else rng.randf_range(0.76, 0.92)
+            imported_tree.scale = Vector3.ONE * tree_scale
+            imported_tree.rotation.y = rng.randf_range(-PI, PI)
             tree.add_child(imported_tree)
             return tree
 
@@ -301,29 +324,29 @@ func _make_tree(world_position: Vector3, style_index: int) -> Node3D:
 
 
 func _make_car(paint: Color, is_player: bool) -> Node3D:
-    # Use the detailed imported CC0 sports car when available; retain the original
-    # procedural model as a safe fallback for editor runs without staged CI assets.
-    if detailed_car_scene != null:
+    # The player uses the hero sports car. Traffic cycles through three imported
+    # CC0 vehicles, so the roadway does not look like cloned copies of one model.
+    var selected_scene: PackedScene = detailed_car_scene if is_player else null
+    if not is_player and not traffic_car_scenes.is_empty():
+        selected_scene = traffic_car_scenes[rng.randi_range(0, traffic_car_scenes.size() - 1)]
+    if selected_scene != null:
         var imported_root := Node3D.new()
         imported_root.name = "PlayerSportsCar" if is_player else "TrafficCar"
-        var imported_car := detailed_car_scene.instantiate() as Node3D
+        var imported_car := selected_scene.instantiate() as Node3D
         if imported_car != null:
-            imported_car.name = "SpectralGT_RS"
-            # Source asset faces +X; the game's traffic travels along the Z axis.
-            imported_car.rotation.y = PI * 0.5
+            imported_car.name = "SpectralGT_RS" if selected_scene == detailed_car_scene else "ImportedTrafficVehicle"
+            # The downloaded models use +X as their longitudinal axis. The player's
+            # front points down -Z; oncoming traffic must point toward +Z, not drive
+            # backwards into the player.
+            imported_car.rotation.y = PI * 0.5 if is_player else -PI * 0.5
             imported_car.scale = Vector3.ONE * 0.72
             imported_root.add_child(imported_car)
-            var accent := MeshInstance3D.new()
-            var strip := BoxMesh.new()
-            strip.size = Vector3(0.055, 0.035, 1.05)
-            accent.mesh = strip
-            accent.position = Vector3(0.0, 1.16, -0.48)
-            accent.material_override = _mat(paint, 0.22, 0.5)
-            imported_root.add_child(accent)
             return imported_root
 
     var car := Node3D.new()
     car.name = "PlayerSportsCar" if is_player else "TrafficCar"
+    # Procedural fallback faces down -Z, so reverse oncoming traffic as well.
+    car.rotation.y = 0.0 if is_player else PI
     var body_material := _mat(paint, 0.24, 0.18)
     var dark_material := _mat(Color(0.035, 0.055, 0.085), 0.55)
     var glass_material := _mat(Color(0.18, 0.63, 0.83), 0.18, 0.16)
@@ -716,6 +739,23 @@ func _update_hud() -> void:
         coins_label.text = "COINS  %02d" % coins_collected
 
 
+func _get_grass_material() -> StandardMaterial3D:
+    if grass_material_cache != null:
+        return grass_material_cache
+    var grass := _mat(Color(0.94, 0.98, 0.90), 0.96)
+    if ResourceLoader.exists("res://assets/textures/sparse_grass_diffuse.jpg"):
+        grass.albedo_texture = load("res://assets/textures/sparse_grass_diffuse.jpg") as Texture2D
+    if ResourceLoader.exists("res://assets/textures/sparse_grass_normal.jpg"):
+        grass.normal_enabled = true
+        grass.normal_texture = load("res://assets/textures/sparse_grass_normal.jpg") as Texture2D
+    if ResourceLoader.exists("res://assets/textures/sparse_grass_roughness.jpg"):
+        grass.roughness_texture = load("res://assets/textures/sparse_grass_roughness.jpg") as Texture2D
+    # Repeat the 1K PBR tile across the large terrain plane instead of stretching it.
+    grass.uv1_scale = Vector3(48.0, 1.0, 112.0)
+    grass_material_cache = grass
+    return grass_material_cache
+
+
 func _get_road_material() -> StandardMaterial3D:
     if road_material_cache != null:
         return road_material_cache
@@ -766,8 +806,8 @@ func _make_sphere(scale_value: Vector3, position_value: Vector3, color_value: Co
     var sphere_mesh := SphereMesh.new()
     sphere_mesh.radius = 1.0
     sphere_mesh.height = 2.0
-    sphere_mesh.radial_segments = 12
-    sphere_mesh.rings = 8
+    sphere_mesh.radial_segments = 32
+    sphere_mesh.rings = 20
     var instance := MeshInstance3D.new()
     instance.mesh = sphere_mesh
     instance.scale = scale_value
