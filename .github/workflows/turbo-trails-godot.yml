@@ -90,6 +90,19 @@ jobs:
           "$GODOT_BIN" --headless --editor --path . --import --quit
           "$GODOT_BIN" --headless --path . --quit-after 8
 
+      - name: Install virtual display and software renderer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1-mesa-dri
+
+      - name: Smoke test actual rendering and steering controls
+        working-directory: turbo-trails-godot
+        env:
+          GODOT_SILENCE_ROOT_WARNING: "1"
+        run: |
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path . --script res://scripts/smoke_test.gd
+          test -s "$GITHUB_WORKSPACE/turbo-trails-render-smoke.png"
+
       - name: Export signed Android APK
         working-directory: turbo-trails-godot
         env:
