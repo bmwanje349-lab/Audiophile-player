@@ -1,0 +1,11 @@
+{
+  "name": "Audio Doctor Studio",
+  "short_name": "Audio Doctor",
+  "description": "Local-first audio analysis and repair workspace",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0a0d12",
+  "theme_color": "#0a0d12",
+  "icons": []
+}
