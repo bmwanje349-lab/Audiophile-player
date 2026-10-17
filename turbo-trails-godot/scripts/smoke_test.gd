@@ -29,13 +29,34 @@ func _run_smoke_test() -> void:
     if not camera.current:
         _fail("FollowCamera exists but is not the active camera.")
         return
-    if car == null or car.get_child_count() < 12:
+    if car == null or car.get_child_count() < 2:
         _fail("Player car mesh assembly was not created.")
+        return
+    if not ResourceLoader.exists("res://assets/vehicles/spectral_gt_rs_game_ready.glb"):
+        _fail("Imported CC0 sports-car asset is missing from the build.")
+        return
+    if not ResourceLoader.exists("res://assets/textures/asphalt_track_diffuse.jpg"):
+        _fail("Imported Poly Haven road texture is missing from the build.")
+        return
+    if game.get("detailed_car_scene") == null:
+        _fail("Detailed GLB vehicle was not imported as a Godot scene.")
         return
 
     var road_segments = game.get("road_segments")
     if road_segments == null or road_segments.size() < 10:
         _fail("Road generation produced too few segments.")
+        return
+    var first_road := road_segments[0] as Node3D
+    var road_texture_found := false
+    for child in first_road.get_children():
+        var mesh_instance := child as MeshInstance3D
+        if mesh_instance != null and mesh_instance.material_override is StandardMaterial3D:
+            var road_mat := mesh_instance.material_override as StandardMaterial3D
+            if road_mat.albedo_texture != null:
+                road_texture_found = true
+                break
+    if not road_texture_found:
+        _fail("Road surface is not using the imported asphalt texture.")
         return
 
     var buttons := game.find_children("*", "Button", true, false)

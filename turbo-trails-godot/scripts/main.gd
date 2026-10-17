@@ -1,7 +1,6 @@
 extends Node3D
 
-# Turbo Trails 3D — Godot 4 project, built from real 3D meshes.
-# Lightweight low-poly art, GL Compatibility renderer, no large third-party assets.
+# Turbo Trails 3D — Godot 4 arcade racer with imported CC0 vehicle and PBR road assets.
 
 const SEGMENT_LENGTH: float = 36.0
 const SEGMENT_COUNT: int = 14
@@ -15,6 +14,8 @@ const CAR_PAINTS: Array[Color] = [
 
 var rng := RandomNumberGenerator.new()
 var material_cache: Dictionary = {}
+var road_material_cache: StandardMaterial3D
+var detailed_car_scene: PackedScene
 var road_segments: Array[Node3D] = []
 var traffic: Array[Dictionary] = []
 var coin_rows: Array[Dictionary] = []
@@ -40,6 +41,8 @@ var camera_bump: float = 0.0
 
 func _ready() -> void:
     rng.randomize()
+    if ResourceLoader.exists("res://assets/vehicles/spectral_gt_rs_game_ready.glb"):
+        detailed_car_scene = load("res://assets/vehicles/spectral_gt_rs_game_ready.glb") as PackedScene
     _make_environment()
     _make_ground_and_hills()
     _make_road()
@@ -209,7 +212,7 @@ func _make_road() -> void:
         var segment := Node3D.new()
         segment.name = "RoadSegment_%02d" % i
         segment.position.z = 18.0 - float(i) * SEGMENT_LENGTH
-        _add_box(segment, Vector3(12.0, 0.22, SEGMENT_LENGTH), Vector3(0.0, -0.15, 0.0), _mat(Color(0.20, 0.23, 0.30), 0.92), false)
+        _add_box(segment, Vector3(12.0, 0.22, SEGMENT_LENGTH), Vector3(0.0, -0.15, 0.0), _get_road_material(), false)
         _add_box(segment, Vector3(0.24, 0.035, SEGMENT_LENGTH), Vector3(-5.86, -0.025, 0.0), _mat(Color(1.0, 0.82, 0.35), 0.7), false)
         _add_box(segment, Vector3(0.24, 0.035, SEGMENT_LENGTH), Vector3(5.86, -0.025, 0.0), _mat(Color(1.0, 0.82, 0.35), 0.7), false)
 
@@ -280,6 +283,27 @@ func _make_tree(world_position: Vector3, style_index: int) -> Node3D:
 
 
 func _make_car(paint: Color, is_player: bool) -> Node3D:
+    # Use the detailed imported CC0 sports car when available; retain the original
+    # procedural model as a safe fallback for editor runs without staged CI assets.
+    if detailed_car_scene != null:
+        var imported_root := Node3D.new()
+        imported_root.name = "PlayerSportsCar" if is_player else "TrafficCar"
+        var imported_car := detailed_car_scene.instantiate() as Node3D
+        if imported_car != null:
+            imported_car.name = "SpectralGT_RS"
+            # Source asset faces +X; the game's traffic travels along the Z axis.
+            imported_car.rotation.y = PI * 0.5
+            imported_car.scale = Vector3.ONE * 0.72
+            imported_root.add_child(imported_car)
+            var accent := MeshInstance3D.new()
+            var strip := BoxMesh.new()
+            strip.size = Vector3(0.055, 0.035, 1.05)
+            accent.mesh = strip
+            accent.position = Vector3(0.0, 1.16, -0.48)
+            accent.material_override = _mat(paint, 0.22, 0.5)
+            imported_root.add_child(accent)
+            return imported_root
+
     var car := Node3D.new()
     car.name = "PlayerSportsCar" if is_player else "TrafficCar"
     var body_material := _mat(paint, 0.24, 0.18)
@@ -525,6 +549,18 @@ func _make_ui() -> void:
     title.add_theme_constant_override("shadow_offset_y", 2)
     ui.add_child(title)
 
+    var asset_credit := Label.new()
+    asset_credit.text = "CC0 SPORTS CAR  •  ASPHALT MATERIAL: POLY HAVEN"
+    asset_credit.anchor_left = 0.10 + safe_left
+    asset_credit.anchor_right = 0.90 - safe_right
+    asset_credit.anchor_top = 0.17 + safe_top
+    asset_credit.anchor_bottom = 0.195 + safe_top
+    asset_credit.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    asset_credit.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    asset_credit.add_theme_font_size_override("font_size", 11)
+    asset_credit.add_theme_color_override("font_color", Color(0.86, 0.95, 1.0, 0.88))
+    ui.add_child(asset_credit)
+
     steering_hint = Label.new()
     steering_hint.text = "TAP LEFT / RIGHT TO CHANGE LANES"
     steering_hint.anchor_left = 0.10 + safe_left
@@ -660,6 +696,22 @@ func _update_hud() -> void:
         score_label.text = "SCORE  %06d" % score
     if is_instance_valid(coins_label):
         coins_label.text = "COINS  %02d" % coins_collected
+
+
+func _get_road_material() -> StandardMaterial3D:
+    if road_material_cache != null:
+        return road_material_cache
+    var road := _mat(Color(0.72, 0.74, 0.78), 0.94)
+    if ResourceLoader.exists("res://assets/textures/asphalt_track_diffuse.jpg"):
+        road.albedo_texture = load("res://assets/textures/asphalt_track_diffuse.jpg") as Texture2D
+        road.uv1_scale = Vector3(1.0, 1.0, 7.0)
+    if ResourceLoader.exists("res://assets/textures/asphalt_track_normal.jpg"):
+        road.normal_enabled = true
+        road.normal_texture = load("res://assets/textures/asphalt_track_normal.jpg") as Texture2D
+    if ResourceLoader.exists("res://assets/textures/asphalt_track_roughness.jpg"):
+        road.roughness_texture = load("res://assets/textures/asphalt_track_roughness.jpg") as Texture2D
+    road_material_cache = road
+    return road_material_cache
 
 
 func _mat(color: Color, roughness: float = 0.72, metallic: float = 0.0, emission_color: Color = Color.BLACK) -> StandardMaterial3D:

@@ -84,6 +84,34 @@ jobs:
           export/android/android_sdk_path = "$ANDROID_HOME"
           EOF
 
+      - name: Download and stage free CC0 game assets
+        working-directory: turbo-trails-godot
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p assets/vehicles assets/textures
+          # Detailed Spectral GT RS sports car, dedicated CC0 1.0 by its author.
+          curl --fail --location --retry 3 --retry-delay 2 "https://raw.githubusercontent.com/JaronKBragg7337/spectral-gt-rs/main/spectral_gt_rs_game_ready.glb" -o assets/vehicles/spectral_gt_rs_game_ready.glb
+          test "$(stat -c %s assets/vehicles/spectral_gt_rs_game_ready.glb)" -gt 1000000
+          # Poly Haven Asphalt Track PBR texture maps, downloaded at mobile-friendly 1K.
+          curl --fail --location --retry 3 --retry-delay 2 -H "User-Agent: TurboTrails3D-AssetImporter/1.0" "https://api.polyhaven.com/files/asphalt_track" -o "$RUNNER_TEMP/asphalt-track-files.json"
+          DIFFUSE_URL="$(jq -r '.Diffuse["1k"].jpg.url // .diffuse["1k"].jpg.url // empty' "$RUNNER_TEMP/asphalt-track-files.json")"
+          NORMAL_URL="$(jq -r '.nor_gl["1k"].jpg.url // .nor_gl["1k"].png.url // .NormalGL["1k"].jpg.url // empty' "$RUNNER_TEMP/asphalt-track-files.json")"
+          ROUGH_URL="$(jq -r '.Rough["1k"].jpg.url // .rough["1k"].jpg.url // empty' "$RUNNER_TEMP/asphalt-track-files.json")"
+          test -n "$DIFFUSE_URL"
+          curl --fail --location --retry 3 --retry-delay 2 "$DIFFUSE_URL" -o assets/textures/asphalt_track_diffuse.jpg
+          if [ -n "$NORMAL_URL" ]; then curl --fail --location --retry 3 --retry-delay 2 "$NORMAL_URL" -o assets/textures/asphalt_track_normal.jpg; fi
+          if [ -n "$ROUGH_URL" ]; then curl --fail --location --retry 3 --retry-delay 2 "$ROUGH_URL" -o assets/textures/asphalt_track_roughness.jpg; fi
+          cat > assets/ASSET_CREDITS.md <<'EOF'
+          # Turbo Trails 3D — third-party assets
+          - Spectral GT RS detailed sports car: JaronKBragg7337, CC0 1.0 Universal.
+            Source: https://github.com/JaronKBragg7337/spectral-gt-rs
+          - Asphalt Track PBR maps: Poly Haven, CC0.
+            Source: https://polyhaven.com/a/asphalt_track
+          - Assets are downloaded during the Android build and packed into the APK.
+          EOF
+          du -h assets/vehicles/* assets/textures/*
+
       - name: Validate project and GDScript
         working-directory: turbo-trails-godot
         run: |
