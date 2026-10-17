@@ -27,6 +27,12 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200,{"name":"Audio Doctor Studio local engine","python_engine":True,"ffmpeg":bool(shutil.which("ffmpeg")),
                 "ffprobe":bool(shutil.which("ffprobe")),"numpy":True,"max_upload_bytes":MAX_UPLOAD,
                 "privacy":"Uploaded temp files are processed locally and deleted after the request."})
+        if path in ("/sw.js", "/manifest.webmanifest"):
+            target = WEB / path.lstrip("/")
+            if target.is_file():
+                kind = "application/javascript; charset=utf-8" if target.suffix == ".js" else "application/manifest+json"
+                return self._send(200, target.read_bytes(), kind)
+            return self._json(404, {"error": "File not found."})
         if path in ("/","/index.html"):
             return self._send(200,(WEB/"index.html").read_bytes(),"text/html; charset=utf-8")
         if path.startswith("/web/"):
