@@ -16,18 +16,23 @@ func _run_smoke_test() -> void:
 
     var game := packed.instantiate()
     root.add_child(game)
+    current_scene = game
 
-    # Allow _ready() and multiple render frames to run.
+    # Allow _ready(), active-camera selection and multiple render frames to run.
     for frame in range(8):
         await process_frame
+    await RenderingServer.frame_post_draw
 
     var camera := game.get_node_or_null("FollowCamera") as Camera3D
     var car := game.get_node_or_null("PlayerSportsCar") as Node3D
     if camera == null:
         _fail("FollowCamera was not created.")
         return
-    if not camera.current:
-        _fail("FollowCamera exists but is not the active camera.")
+    if camera.get_viewport().get_camera_3d() != camera:
+        camera.make_current()
+        await RenderingServer.frame_post_draw
+    if camera.get_viewport().get_camera_3d() != camera:
+        _fail("FollowCamera is not the active camera in the rendered viewport.")
         return
     if car == null or car.get_child_count() < 2:
         _fail("Player car mesh assembly was not created.")
@@ -38,12 +43,19 @@ func _run_smoke_test() -> void:
     if not ResourceLoader.exists("res://assets/textures/asphalt_track_diffuse.jpg"):
         _fail("Imported Poly Haven road texture is missing from the build.")
         return
+    if not ResourceLoader.exists("res://assets/textures/sparse_grass_diffuse.jpg"):
+        _fail("Imported Poly Haven terrain texture is missing from the build.")
+        return
     if game.get("detailed_car_scene") == null:
-        _fail("Detailed GLB vehicle was not imported as a Godot scene.")
+        _fail("Detailed GLB hero vehicle was not imported as a Godot scene.")
+        return
+    var traffic_car_scenes: Array = game.get("traffic_car_scenes")
+    if traffic_car_scenes.size() < 3:
+        _fail("Three imported traffic-car options were not loaded.")
         return
     var nature_trees: Array = game.get("nature_tree_scenes")
-    if nature_trees.is_empty():
-        _fail("Imported CC0 roadside tree models were not loaded.")
+    if nature_trees.size() < 3:
+        _fail("All three higher-detail CC0 roadside tree models were not loaded.")
         return
 
     var road_segments = game.get("road_segments")
@@ -130,19 +142,27 @@ func _run_smoke_test() -> void:
         _fail("Score did not advance after the game loop ran.")
         return
 
-    # Capture an actual rendered frame. Pixel diversity catches empty/flat views.
+    # Capture after the renderer has finished a frame. Restrict the diversity
+    # check to the central playfield, excluding HUD labels and touch buttons:
+    # UI colors must never let a blank 3D world pass this test.
     await process_frame
-    await process_frame
+    await RenderingServer.frame_post_draw
     var image := root.get_texture().get_image()
     if image == null or image.is_empty() or image.get_width() < 100 or image.get_height() < 100:
         _fail("Rendered viewport capture is empty or too small.")
         return
 
     var bins: Dictionary = {}
-    var step_x := maxi(1, int(image.get_width() / 72))
-    var step_y := maxi(1, int(image.get_height() / 72))
-    for y in range(0, image.get_height(), step_y):
-        for x in range(0, image.get_width(), step_x):
+    var world_left := int(image.get_width() * 0.12)
+    var world_right := int(image.get_width() * 0.88)
+    var world_top := int(image.get_height() * 0.21)
+    var world_bottom := int(image.get_height() * 0.70)
+    var step_x := maxi(1, int(image.get_width() / 96))
+    var step_y := maxi(1, int(image.get_height() / 120))
+    var world_region_min := image.get_pixel(world_left, world_top)
+    var world_contrast_samples := 0
+    for y in range(world_top, world_bottom, step_y):
+        for x in range(world_left, world_right, step_x):
             var c := image.get_pixel(x, y)
             var key := "%02x%02x%02x" % [
                 int(clampf(c.r, 0.0, 1.0) * 31.0),
@@ -150,9 +170,11 @@ func _run_smoke_test() -> void:
                 int(clampf(c.b, 0.0, 1.0) * 31.0)
             ]
             bins[key] = true
+            if absf(c.r - world_region_min.r) + absf(c.g - world_region_min.g) + absf(c.b - world_region_min.b) > 0.14:
+                world_contrast_samples += 1
 
-    if bins.size() < 24:
-        _fail("Rendered frame has too little pixel variation; likely blank or unrendered.")
+    if bins.size() < 32 or world_contrast_samples < 80:
+        _fail("Central 3D playfield is blank or visually flat (colour bins=%d, contrast samples=%d); HUD pixels are excluded." % [bins.size(), world_contrast_samples])
         return
 
     var workspace := OS.get_environment("GITHUB_WORKSPACE")
@@ -165,8 +187,9 @@ func _run_smoke_test() -> void:
         return
 
     print("TURBO_TRAILS_SMOKE_PASS")
-    print("camera=current; road_segments=%d; buttons=%d; score=%d; colour_bins=%d" % [
-        road_segments.size(), buttons.size(), int(game.get("score")), bins.size()
+    print("camera=current; road_segments=%d; traffic_models=%d; imported_trees=%d; buttons=%d; score=%d; world_colour_bins=%d; world_contrast_samples=%d" % [
+        road_segments.size(), traffic_car_scenes.size(), nature_trees.size(),
+        buttons.size(), int(game.get("score")), bins.size(), world_contrast_samples
     ])
     print("render_screenshot=%s" % screenshot_path)
     quit(0)
