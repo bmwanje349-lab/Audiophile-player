@@ -1,5 +1,5 @@
 const CACHE_NAME = "audio-doctor-studio-v1";
-const CORE = ["./", "./index.html", "./manifest.webmanifest", "./sw.js"];
+const CORE = ["./", "./index.html", "./manifest.webmanifest", "./sw.js", "./icon.svg"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(CORE)).then(() => self.skipWaiting()));
 });
