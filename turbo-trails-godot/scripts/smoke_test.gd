@@ -34,8 +34,12 @@ func _run_smoke_test() -> void:
     if camera.get_viewport().get_camera_3d() != camera:
         _fail("FollowCamera is not the active camera in the rendered viewport.")
         return
-    if car == null or car.get_child_count() < 2:
-        _fail("Player car mesh assembly was not created.")
+    if car == null or car.get_child_count() < 1:
+        _fail("Player car node has no imported model child.")
+        return
+    var player_meshes := car.find_children("*", "MeshInstance3D", true, false)
+    if player_meshes.is_empty():
+        _fail("Player car contains no renderable mesh instances.")
         return
     if not ResourceLoader.exists("res://assets/vehicles/spectral_gt_rs_game_ready.glb"):
         _fail("Imported CC0 sports-car asset is missing from the build.")
