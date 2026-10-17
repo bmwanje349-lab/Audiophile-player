@@ -18,6 +18,7 @@ var road_material_cache: StandardMaterial3D
 var detailed_car_scene: PackedScene
 var traffic_car_scenes: Array[PackedScene] = []
 var nature_tree_scenes: Array[PackedScene] = []
+var hdri_sky_loaded: bool = false
 var grass_material_cache: StandardMaterial3D
 var road_segments: Array[Node3D] = []
 var traffic: Array[Dictionary] = []
@@ -146,20 +147,38 @@ func _make_environment() -> void:
     var env := Environment.new()
     env.background_mode = Environment.BG_SKY
     env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-    env.ambient_light_energy = 0.74
+    env.ambient_light_energy = 0.62
     env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-    env.tonemap_exposure = 0.98
+    env.tonemap_exposure = 0.90
     env.fog_enabled = true
-    env.fog_light_color = Color(0.64, 0.86, 0.98)
-    env.fog_density = 0.0015
+    env.fog_light_color = Color(0.66, 0.77, 0.82)
+    env.fog_density = 0.0012
 
     var sky := Sky.new()
-    var sky_material := ProceduralSkyMaterial.new()
-    sky_material.sky_top_color = Color(0.08, 0.55, 0.96)
-    sky_material.sky_horizon_color = Color(0.63, 0.88, 1.0)
-    sky_material.ground_bottom_color = Color(0.25, 0.56, 0.31)
-    sky_material.ground_horizon_color = Color(0.70, 0.91, 0.76)
-    sky.sky_material = sky_material
+    var hdri_texture: Texture2D
+    for sky_path in [
+        "res://assets/textures/autumn_field_puresky.hdr",
+        "res://assets/textures/autumn_field_puresky.exr"
+    ]:
+        if ResourceLoader.exists(sky_path):
+            hdri_texture = load(sky_path) as Texture2D
+            if hdri_texture != null:
+                break
+
+    if hdri_texture != null:
+        var panorama_material := PanoramaSkyMaterial.new()
+        panorama_material.panorama = hdri_texture
+        panorama_material.energy_multiplier = 0.78
+        sky.sky_material = panorama_material
+        hdri_sky_loaded = true
+    else:
+        # Keep a safe editor fallback, while CI smoke tests require the real asset.
+        var sky_material := ProceduralSkyMaterial.new()
+        sky_material.sky_top_color = Color(0.08, 0.55, 0.96)
+        sky_material.sky_horizon_color = Color(0.63, 0.88, 1.0)
+        sky_material.ground_bottom_color = Color(0.25, 0.56, 0.31)
+        sky_material.ground_horizon_color = Color(0.70, 0.91, 0.76)
+        sky.sky_material = sky_material
     env.sky = sky
 
     var world_environment := WorldEnvironment.new()
@@ -170,7 +189,7 @@ func _make_environment() -> void:
     sun.name = "Sunlight"
     sun.rotation_degrees = Vector3(-48.0, -28.0, 0.0)
     sun.light_color = Color(1.0, 0.91, 0.73)
-    sun.light_energy = 1.05
+    sun.light_energy = 0.88
     sun.shadow_enabled = true
     # One shadow split is cheaper than the multi-split default on mobile GPUs.
     sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
@@ -198,6 +217,11 @@ func _make_ground_and_hills() -> void:
     add_child(ground)
 
     _make_terrain_banks()
+
+    # The CC0 panorama already supplies a natural sky; procedural cloud blobs
+    # are only retained when running an editor preview without downloaded assets.
+    if hdri_sky_loaded:
+        return
 
     for i in range(8):
         var cloud_root := Node3D.new()
@@ -247,7 +271,7 @@ func _make_terrain_bank(side: float, terrain_noise: FastNoiseLite) -> void:
             var ridge_amount: float = clampf((x_abs - 10.0) / 82.0, 0.0, 1.0)
             var ridge_shape: float = sin(ridge_amount * PI)
             var noise_height: float = terrain_noise.get_noise_2d(side * x_abs, z) * 1.2
-            var height: float = rise * outer_fade * maxf(0.0, ridge_shape * 4.0 + noise_height)
+            var height: float = rise * outer_fade * maxf(0.0, ridge_shape * 5.6 + noise_height * 1.25)
             vertices.append(Vector3(side * x_abs, -0.32 + height, z))
             # World-space scaling gives the same natural grass tile size on both banks.
             uvs.append(Vector2(x_abs / 8.0, z / 8.0))
@@ -647,7 +671,7 @@ func _make_ui() -> void:
     ui.add_child(title)
 
     var asset_credit := Label.new()
-    asset_credit.text = "CC0 SPORTS CAR  •  ASPHALT MATERIAL: POLY HAVEN"
+    asset_credit.text = "CC0 CARS + TREES  •  POLY HAVEN PBR + SKY"
     asset_credit.anchor_left = 0.10 + safe_left
     asset_credit.anchor_right = 0.90 - safe_right
     asset_credit.anchor_top = 0.17 + safe_top
@@ -799,17 +823,16 @@ func _update_hud() -> void:
 func _get_grass_material() -> StandardMaterial3D:
     if grass_material_cache != null:
         return grass_material_cache
-    # A slightly deeper green tint counters overexposed beige speckling outdoors.
-    var grass := _mat(Color(0.60, 0.82, 0.43), 0.98)
-    if ResourceLoader.exists("res://assets/textures/sparse_grass_diffuse.jpg"):
-        grass.albedo_texture = load("res://assets/textures/sparse_grass_diffuse.jpg") as Texture2D
-    if ResourceLoader.exists("res://assets/textures/sparse_grass_normal.jpg"):
-        grass.normal_enabled = true
-        grass.normal_texture = load("res://assets/textures/sparse_grass_normal.jpg") as Texture2D
-    if ResourceLoader.exists("res://assets/textures/sparse_grass_roughness.jpg"):
-        grass.roughness_texture = load("res://assets/textures/sparse_grass_roughness.jpg") as Texture2D
+    # Natural leafy-ground albedo, a matte finish, and no fine normal map prevent
+    # distracting high-frequency sparkle as the camera travels down the road.
+    var grass := _mat(Color(0.70, 0.88, 0.54), 0.99)
+    if ResourceLoader.exists("res://assets/textures/leafy_grass_diffuse.jpg"):
+        grass.albedo_texture = load("res://assets/textures/leafy_grass_diffuse.jpg") as Texture2D
+    if ResourceLoader.exists("res://assets/textures/leafy_grass_roughness.jpg"):
+        grass.roughness_texture = load("res://assets/textures/leafy_grass_roughness.jpg") as Texture2D
+    grass.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
     # Repeat the 1K PBR tile across the large terrain plane instead of stretching it.
-    grass.uv1_scale = Vector3(32.0, 1.0, 76.0)
+    grass.uv1_scale = Vector3(28.0, 1.0, 66.0)
     grass_material_cache = grass
     return grass_material_cache
 
@@ -821,6 +844,7 @@ func _get_road_material() -> StandardMaterial3D:
     if ResourceLoader.exists("res://assets/textures/asphalt_track_diffuse.jpg"):
         road.albedo_texture = load("res://assets/textures/asphalt_track_diffuse.jpg") as Texture2D
         road.uv1_scale = Vector3(1.0, 1.0, 7.0)
+        road.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
     if ResourceLoader.exists("res://assets/textures/asphalt_track_normal.jpg"):
         road.normal_enabled = true
         road.normal_texture = load("res://assets/textures/asphalt_track_normal.jpg") as Texture2D
