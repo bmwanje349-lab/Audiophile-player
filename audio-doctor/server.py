@@ -27,7 +27,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200,{"name":"Audio Doctor Studio local engine","python_engine":True,"ffmpeg":bool(shutil.which("ffmpeg")),
                 "ffprobe":bool(shutil.which("ffprobe")),"numpy":True,"max_upload_bytes":MAX_UPLOAD,
                 "privacy":"Uploaded temp files are processed locally and deleted after the request."})
-        if path in ("/sw.js", "/manifest.webmanifest"):
+        if path in ("/sw.js", "/manifest.webmanifest", "/icon.svg"):
             target = WEB / path.lstrip("/")
             if target.is_file():
                 kind = "application/javascript; charset=utf-8" if target.suffix == ".js" else "application/manifest+json"
