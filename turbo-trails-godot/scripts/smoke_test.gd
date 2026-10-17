@@ -47,8 +47,14 @@ func _run_smoke_test() -> void:
     if not ResourceLoader.exists("res://assets/textures/asphalt_track_diffuse.jpg"):
         _fail("Imported Poly Haven road texture is missing from the build.")
         return
-    if not ResourceLoader.exists("res://assets/textures/sparse_grass_diffuse.jpg"):
-        _fail("Imported Poly Haven terrain texture is missing from the build.")
+    if not ResourceLoader.exists("res://assets/textures/leafy_grass_diffuse.jpg"):
+        _fail("Imported Poly Haven leafy-ground texture is missing from the build.")
+        return
+    if not ResourceLoader.exists("res://assets/textures/autumn_field_puresky.hdr") and not ResourceLoader.exists("res://assets/textures/autumn_field_puresky.exr"):
+        _fail("Imported Poly Haven pure-sky panorama is missing from the build.")
+        return
+    if not bool(game.get("hdri_sky_loaded")):
+        _fail("The 3D environment is not using the imported CC0 panoramic sky.")
         return
     if game.get("detailed_car_scene") == null:
         _fail("Detailed GLB hero vehicle was not imported as a Godot scene.")
