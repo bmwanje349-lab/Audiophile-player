@@ -82,6 +82,16 @@ func _run_smoke_test() -> void:
         _fail("Road generation produced too few segments.")
         return
     var first_road := road_segments[0] as Node3D
+    if first_road.get_child_count() > 8:
+        _fail("Road markings are not batched; too many separate road draw nodes remain.")
+        return
+    var road_batches := first_road.find_children("*", "MultiMeshInstance3D", false, false)
+    if road_batches.size() < 4:
+        _fail("Road marking MultiMesh batches were not created.")
+        return
+    if not bool(ProjectSettings.get_setting("physics/common/physics_interpolation", false)):
+        _fail("Physics interpolation is disabled; transform motion may visibly judder.")
+        return
     var road_texture_found := false
     for child in first_road.get_children():
         var mesh_instance := child as MeshInstance3D
@@ -112,6 +122,39 @@ func _run_smoke_test() -> void:
     if left_button.action_mode != BaseButton.ACTION_MODE_BUTTON_PRESS or right_button.action_mode != BaseButton.ACTION_MODE_BUTTON_PRESS:
         _fail("Steering buttons must trigger on touch-down.")
         return
+
+    # Verify that live spawns recycle prewarmed nodes rather than adding detailed
+    # GLB cars, coin meshes, or materials to the scene tree while racing.
+    var traffic_pool: Array = game.get("traffic_pool")
+    var coin_pool: Array = game.get("coin_pool")
+    if traffic_pool.size() < 6 or coin_pool.size() < 12:
+        _fail("Traffic and coin pools were not fully prewarmed before gameplay.")
+        return
+    game.call("_restart")
+    var child_count_before_spawn := game.get_child_count()
+    game.call("_spawn_traffic")
+    var spawned_traffic: Array = game.get("traffic")
+    if spawned_traffic.size() != 1:
+        _fail("Traffic spawn failed to activate a pooled car.")
+        return
+    var spawned_car := spawned_traffic[0]["node"] as Node3D
+    if not traffic_pool.has(spawned_car) or not spawned_car.visible:
+        _fail("Traffic spawn did not reuse and show a prewarmed car.")
+        return
+    game.call("_spawn_coin_train")
+    var spawned_coins: Array = game.get("coin_rows")
+    if spawned_coins.size() != 4:
+        _fail("Coin train failed to activate four pooled coins.")
+        return
+    for coin_item in spawned_coins:
+        var pooled_coin := coin_item["node"] as Node3D
+        if not coin_pool.has(pooled_coin) or not pooled_coin.visible:
+            _fail("Coin spawn did not reuse and show a prewarmed coin.")
+            return
+    if game.get_child_count() != child_count_before_spawn:
+        _fail("Live traffic or coin spawns allocated new scene-tree nodes.")
+        return
+    game.call("_restart")
 
     var lane_before := int(game.get("player_lane"))
     left_button.pressed.emit()

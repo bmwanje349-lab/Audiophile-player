@@ -1432,7 +1432,7 @@ func _get_box_mesh(size: Vector3) -> BoxMesh:
 
 func _add_box(parent: Node3D, size: Vector3, position_value: Vector3, material_value: Material, casts_shadow: bool = true) -> MeshInstance3D:
     var instance := MeshInstance3D.new()
-    instance.mesh = mesh
+    instance.mesh = _get_box_mesh(size)
     instance.position = position_value
     instance.material_override = material_value
     if not casts_shadow:
