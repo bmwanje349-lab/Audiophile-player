@@ -701,7 +701,12 @@ func _make_road() -> void:
 
 func _make_roadside_scenery() -> void:
     # Use fewer high-detail tree instances to preserve frame time on mobile.
-    for i in range(26 if tier <= Tier.MEDIUM else (16 if tier == Tier.LITE else 8))
+    var tree_count: int = 26
+    if tier == Tier.LITE:
+        tree_count = 16
+    elif tier == Tier.SAFE:
+        tree_count = 8
+    for i in range(tree_count):
         var side: float = -1.0 if i % 2 == 0 else 1.0
         var prop := _make_tree(
             Vector3(
