@@ -434,6 +434,11 @@ func _process(delta: float) -> void:
     # Resume/background frame gaps must not teleport traffic or scenery across the player.
     delta = minf(delta, 0.05)
 
+    # _ready() deliberately yields while asset loading and world construction run.
+    # Do not run movement or camera code until those nodes actually exist.
+    if not world_ready:
+        return
+
     # Some Android surface/activity transitions can reset the active camera.
     # Reassert it so the scene cannot silently render without a view camera.
     if is_instance_valid(camera):
