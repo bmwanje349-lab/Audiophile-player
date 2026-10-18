@@ -1008,37 +1008,6 @@ func _spawn_coin_train() -> void:
         coin.reset_physics_interpolation()
         coin_rows.append({"node": coin, "lane": lane, "bob_phase": rng.randf_range(0.0, TAU)})
 
-func _spawn_coin_train() -> void:
-    var lane: int = rng.randi_range(0, 2)
-    for i in range(4):
-        var coin := Node3D.new()
-        coin.name = "GoldCoin"
-        coin.position = Vector3(LANE_X[lane], 1.35, -121.0 - float(i) * 3.1)
-        var rim_mesh := CylinderMesh.new()
-        rim_mesh.top_radius = 0.61
-        rim_mesh.bottom_radius = 0.61
-        rim_mesh.height = 0.16
-        rim_mesh.radial_segments = 16
-        var rim := MeshInstance3D.new()
-        rim.mesh = rim_mesh
-        rim.rotation.x = PI * 0.5
-        rim.material_override = _mat(Color(0.76, 0.37, 0.035), 0.22, 0.82)
-        coin.add_child(rim)
-        var face_mesh := CylinderMesh.new()
-        face_mesh.top_radius = 0.47
-        face_mesh.bottom_radius = 0.47
-        face_mesh.height = 0.175
-        face_mesh.radial_segments = 16
-        var face := MeshInstance3D.new()
-        face.mesh = face_mesh
-        face.rotation.x = PI * 0.5
-        face.material_override = _mat(Color(1.0, 0.77, 0.11), 0.2, 0.72, Color(0.40, 0.20, 0.01))
-        coin.add_child(face)
-        _add_sphere(coin, Vector3(0.13, 0.13, 0.13), Vector3(0.0, 0.0, -0.10), Color(1.0, 0.93, 0.41), 0.25, 0.55)
-        add_child(coin)
-        coin_rows.append({"node": coin, "lane": lane, "bob_phase": rng.randf_range(0.0, TAU)})
-
-
 func _update_traffic(delta: float) -> void:
     for i in range(traffic.size() - 1, -1, -1):
         var item: Dictionary = traffic[i]
