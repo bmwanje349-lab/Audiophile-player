@@ -4,6 +4,13 @@ extends Node3D
 
 const SEGMENT_LENGTH: float = 36.0
 const SEGMENT_COUNT: int = 14
+
+# Adaptive startup/recovery tiers from the blank-screen fix ZIP.
+enum Tier { FULL, MEDIUM, LITE, SAFE }
+const TIER_NAMES: Array[String] = ["FULL", "MEDIUM", "LITE", "SAFE"]
+const BOOT_FLAG_PATH: String = "user://boot_in_progress.flag"
+const QUALITY_CFG_PATH: String = "user://quality.cfg"
+const ASSET_LOAD_TIMEOUT_MS: int = 45000
 const ROAD_HALF_WIDTH: float = 6.0
 const LANE_X: Array[float] = [-3.8, 0.0, 3.8]
 const CAR_PAINTS: Array[Color] = [
@@ -42,42 +49,386 @@ var coin_timer: float = 2.7
 var game_over: bool = false
 var camera_bump: float = 0.0
 
+var tier: int = Tier.FULL
+var is_mobile: bool = false
+var world_ready: bool = false
+var segment_count: int = SEGMENT_COUNT
+var sphere_radial: int = 32
+var sphere_rings: int = 20
+var loaded_assets: Dictionary = {}
+var loading_layer: CanvasLayer
+var loading_label: Label
+var diagnostics_label: Label
+var ui_root: Control
+
+
 
 func _ready() -> void:
     rng.randomize()
-    if ResourceLoader.exists("res://assets/vehicles/spectral_gt_rs_game_ready.glb"):
-        detailed_car_scene = load("res://assets/vehicles/spectral_gt_rs_game_ready.glb") as PackedScene
-    if detailed_car_scene != null:
-        traffic_car_scenes.append(detailed_car_scene)
+    is_mobile = OS.has_feature("android") or OS.has_feature("mobile") or OS.has_feature("web")
+    # Allow recovery behaviour to be tested on desktop using -- --mobile.
+    if "--mobile" in OS.get_cmdline_user_args():
+        is_mobile = true
+    _choose_tier()
+    _apply_viewport_quality()
+
+    # Put a real 2D loading screen on screen before doing any heavy work.
+    _make_ui()
+    _update_hud()
+    _make_loading_overlay()
+    await get_tree().process_frame
+
+    _set_loading("Loading cars and scenery…")
+    await _load_assets_async()
+
+    _set_loading("Building sky and lights…")
+    await get_tree().process_frame
+    _make_environment()
+
+    _set_loading("Building terrain…")
+    await get_tree().process_frame
+    _make_ground_and_hills()
+
+    _set_loading("Laying the road…")
+    await get_tree().process_frame
+    _make_road()
+
+    _set_loading("Planting trees…")
+    await get_tree().process_frame
+    _make_roadside_scenery()
+
+    _set_loading("Starting your car…")
+    await get_tree().process_frame
+    player_car = _make_car(Color(0.03, 0.86, 0.78), true)
+    player_car.position = Vector3(LANE_X[player_lane], 0.0, 3.0)
+    add_child(player_car)
+
+    world_ready = true
+    _update_hud()
+    _build_diagnostics_text()
+    await get_tree().process_frame
+    if is_instance_valid(loading_layer):
+        loading_layer.queue_free()
+    _finish_boot_checks()
+
+
+func _choose_tier() -> void:
+    tier = Tier.FULL
+    if not is_mobile:
+        # Keep CI/editor rendering at full quality, but permit explicit tier tests.
+        for arg in OS.get_cmdline_user_args():
+            if arg.begins_with("--tier="):
+                tier = clampi(int(arg.substr(7)), Tier.FULL, Tier.SAFE)
+        _configure_tier_budget()
+        return
+
+    var base_tier: int = Tier.MEDIUM
+    var stored: int = base_tier
+    var cfg := ConfigFile.new()
+    if cfg.load(QUALITY_CFG_PATH) == OK:
+        stored = clampi(int(cfg.get_value("quality", "tier", base_tier)), base_tier, Tier.SAFE)
+    # A flag left by an unclean exit signals that the previous startup may have
+    # exhausted memory or stalled the graphics driver; retry with fewer resources.
+    if FileAccess.file_exists(BOOT_FLAG_PATH):
+        stored = mini(stored + 1, Tier.SAFE)
+    tier = stored
+    _save_tier()
+    var flag := FileAccess.open(BOOT_FLAG_PATH, FileAccess.WRITE)
+    if flag != null:
+        flag.store_string(TIER_NAMES[tier])
+        flag.close()
+    _configure_tier_budget()
+
+
+func _save_tier() -> void:
+    var cfg := ConfigFile.new()
+    cfg.set_value("quality", "tier", tier)
+    cfg.save(QUALITY_CFG_PATH)
+
+
+func _configure_tier_budget() -> void:
+    match tier:
+        Tier.FULL:
+            segment_count = 14
+            sphere_radial = 32
+            sphere_rings = 20
+        Tier.MEDIUM:
+            segment_count = 14
+            sphere_radial = 24
+            sphere_rings = 14
+        Tier.LITE:
+            segment_count = 12
+            sphere_radial = 16
+            sphere_rings = 10
+        _:
+            segment_count = 10
+            sphere_radial = 10
+            sphere_rings = 6
+
+
+func _apply_viewport_quality() -> void:
+    var viewport := get_viewport()
+    if viewport != null and tier >= Tier.MEDIUM:
+        viewport.msaa_3d = Viewport.MSAA_DISABLED
+
+
+func _asset(path: String) -> Resource:
+    return loaded_assets.get(path, null) as Resource
+
+
+func _wanted_asset_paths() -> Array[String]:
+    var wanted: Array[String] = []
+    # The SAFE tier uses procedural cars, road, ground, and sky only.
+    if tier <= Tier.LITE:
+        wanted.append("res://assets/vehicles/spectral_gt_rs_game_ready.glb")
+        wanted.append("res://assets/vehicles/sedan_car.glb")
+        wanted.append("res://assets/vehicles/hatchback_car.glb")
+        wanted.append("res://assets/textures/asphalt_track_diffuse.jpg")
+        wanted.append("res://assets/textures/asphalt_track_normal.jpg")
+        wanted.append("res://assets/textures/asphalt_track_roughness.jpg")
+        wanted.append("res://assets/textures/leafy_grass_diffuse.jpg")
+        wanted.append("res://assets/textures/leafy_grass_roughness.jpg")
+    if tier <= Tier.MEDIUM:
+        wanted.append("res://assets/nature/mature_scots_pine_tree.glb")
+        wanted.append("res://assets/nature/oak_detailed_leaves.glb")
+        wanted.append("res://assets/nature/japanese_maple_tree.glb")
+        wanted.append("res://assets/textures/autumn_field_puresky.hdr")
+        wanted.append("res://assets/textures/autumn_field_puresky.exr")
+    return wanted
+
+
+func _load_assets_async() -> void:
+    # Background resource requests keep the Godot main thread available for the
+    # loading screen and Android lifecycle events.
+    var pending: Array[String] = []
+    for path in _wanted_asset_paths():
+        if not ResourceLoader.exists(path):
+            continue
+        var request_result := ResourceLoader.load_threaded_request(path)
+        if request_result == OK:
+            pending.append(path)
+        else:
+            var immediate := load(path)
+            if immediate != null:
+                loaded_assets[path] = immediate
+
+    var total: int = pending.size()
+    var started_ms: int = Time.get_ticks_msec()
+    while not pending.is_empty():
+        for i in range(pending.size() - 1, -1, -1):
+            var path: String = pending[i]
+            var status := ResourceLoader.load_threaded_get_status(path)
+            if status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+                continue
+            if status == ResourceLoader.THREAD_LOAD_LOADED:
+                var resource := ResourceLoader.load_threaded_get(path)
+                if resource != null:
+                    loaded_assets[path] = resource
+            else:
+                push_warning("Could not load %s; continuing with procedural fallback." % path)
+            pending.remove_at(i)
+        _set_loading("Loading cars and scenery…  %d / %d" % [total - pending.size(), total])
+        if Time.get_ticks_msec() - started_ms > ASSET_LOAD_TIMEOUT_MS:
+            push_warning("Asset loading timed out; continuing with assets that are ready.")
+            break
+        await get_tree().process_frame
+
+    var hero := _asset("res://assets/vehicles/spectral_gt_rs_game_ready.glb") as PackedScene
+    if hero != null:
+        detailed_car_scene = hero
+        traffic_car_scenes.append(hero)
     for vehicle_path in [
         "res://assets/vehicles/sedan_car.glb",
         "res://assets/vehicles/hatchback_car.glb"
     ]:
-        if ResourceLoader.exists(vehicle_path):
-            var vehicle_scene := load(vehicle_path) as PackedScene
-            if vehicle_scene != null:
-                traffic_car_scenes.append(vehicle_scene)
-    # These CC0 trees have full branching and natural silhouettes rather than the
-    # very small low-poly Gobkit proxies previously used for the roadside.
+        var vehicle_scene := _asset(vehicle_path) as PackedScene
+        if vehicle_scene != null:
+            traffic_car_scenes.append(vehicle_scene)
     for tree_path in [
         "res://assets/nature/mature_scots_pine_tree.glb",
         "res://assets/nature/oak_detailed_leaves.glb",
         "res://assets/nature/japanese_maple_tree.glb"
     ]:
-        if ResourceLoader.exists(tree_path):
-            var tree_scene := load(tree_path) as PackedScene
-            if tree_scene != null:
-                nature_tree_scenes.append(tree_scene)
-    _make_environment()
-    _make_ground_and_hills()
-    _make_road()
-    _make_roadside_scenery()
-    player_car = _make_car(Color(0.03, 0.86, 0.78), true)
-    player_car.position = Vector3(LANE_X[player_lane], 0.0, 3.0)
-    add_child(player_car)
-    _make_ui()
-    _update_hud()
+        var tree_scene := _asset(tree_path) as PackedScene
+        if tree_scene != null:
+            nature_tree_scenes.append(tree_scene)
 
+
+func _make_loading_overlay() -> void:
+    loading_layer = CanvasLayer.new()
+    loading_layer.layer = 20
+    add_child(loading_layer)
+    var backdrop := ColorRect.new()
+    backdrop.color = Color(0.04, 0.12, 0.22, 1.0)
+    backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    loading_layer.add_child(backdrop)
+    var title := Label.new()
+    title.text = "T U R B O   T R A I L S   3D"
+    title.anchor_left = 0.0
+    title.anchor_right = 1.0
+    title.anchor_top = 0.36
+    title.anchor_bottom = 0.46
+    title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    title.add_theme_font_size_override("font_size", 30)
+    title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.27))
+    backdrop.add_child(title)
+    loading_label = Label.new()
+    loading_label.text = "Loading…"
+    loading_label.anchor_left = 0.0
+    loading_label.anchor_right = 1.0
+    loading_label.anchor_top = 0.48
+    loading_label.anchor_bottom = 0.56
+    loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    loading_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    loading_label.add_theme_font_size_override("font_size", 18)
+    loading_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.92))
+    backdrop.add_child(loading_label)
+    var tier_label := Label.new()
+    tier_label.text = "graphics: %s" % TIER_NAMES[tier]
+    tier_label.anchor_left = 0.0
+    tier_label.anchor_right = 1.0
+    tier_label.anchor_top = 0.92
+    tier_label.anchor_bottom = 0.97
+    tier_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    tier_label.add_theme_font_size_override("font_size", 12)
+    tier_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.55))
+    backdrop.add_child(tier_label)
+
+
+func _set_loading(text_value: String) -> void:
+    if is_instance_valid(loading_label):
+        loading_label.text = text_value
+
+
+func _build_diagnostics_text() -> void:
+    if not is_instance_valid(ui_root):
+        return
+    diagnostics_label = Label.new()
+    diagnostics_label.text = "graphics %s · %s · %s · trees %d · cars %d" % [
+        TIER_NAMES[tier],
+        RenderingServer.get_current_rendering_method(),
+        RenderingServer.get_video_adapter_name(),
+        scenery.size(), traffic_car_scenes.size()
+    ]
+    diagnostics_label.anchor_left = 0.03
+    diagnostics_label.anchor_right = 0.97
+    diagnostics_label.anchor_top = 0.865
+    diagnostics_label.anchor_bottom = 0.895
+    diagnostics_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    diagnostics_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    diagnostics_label.add_theme_font_size_override("font_size", 11)
+    diagnostics_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.85))
+    diagnostics_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.9))
+    diagnostics_label.add_theme_constant_override("shadow_offset_x", 1)
+    diagnostics_label.add_theme_constant_override("shadow_offset_y", 1)
+    ui_root.add_child(diagnostics_label)
+
+
+func _finish_boot_checks() -> void:
+    if not is_mobile:
+        return
+    await get_tree().create_timer(1.6).timeout
+    await RenderingServer.frame_post_draw
+    var blank := _viewport_looks_blank()
+    if blank and tier < Tier.SAFE:
+        push_warning("3D view looked blank at tier %s; stepping down and restarting." % TIER_NAMES[tier])
+        tier += 1
+        _save_tier()
+        _clear_boot_flag()
+        get_tree().reload_current_scene()
+        return
+    if blank:
+        push_warning("Viewport still looks blank at SAFE tier; applying flat-render fallback.")
+        _activate_flat_render_fallback()
+        await get_tree().process_frame
+        await RenderingServer.frame_post_draw
+        if _viewport_looks_blank():
+            _show_render_recovery_notice()
+    _clear_boot_flag()
+    await get_tree().create_timer(10.0).timeout
+    if is_instance_valid(diagnostics_label):
+        diagnostics_label.queue_free()
+
+
+func _activate_flat_render_fallback() -> void:
+    if is_instance_valid(camera):
+        camera.make_current()
+        camera.near = 0.05
+        camera.far = 500.0
+    for node in find_children("*", "WorldEnvironment", true, false):
+        var world_env := node as WorldEnvironment
+        if world_env == null or world_env.environment == null:
+            continue
+        var env := world_env.environment
+        env.background_mode = Environment.BG_COLOR
+        env.background_color = Color(0.38, 0.72, 0.94)
+        env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+        env.ambient_light_color = Color(0.85, 0.88, 0.92)
+        env.ambient_light_energy = 1.0
+        env.fog_enabled = false
+    for node in find_children("*", "DirectionalLight3D", true, false):
+        var light := node as DirectionalLight3D
+        if light != null:
+            light.shadow_enabled = false
+    RenderingServer.set_default_clear_color(Color(0.38, 0.72, 0.94))
+
+
+func _show_render_recovery_notice() -> void:
+    var layer := CanvasLayer.new()
+    layer.layer = 100
+    add_child(layer)
+    var panel := ColorRect.new()
+    panel.color = Color(0.025, 0.07, 0.12, 0.96)
+    panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    layer.add_child(panel)
+    var label := Label.new()
+    label.text = "TURBO TRAILS\n\nYour device's 3D renderer did not return a usable frame.\nClose and reopen the game. If this repeats, use the Compatibility renderer build."
+    label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    label.offset_left = 24.0
+    label.offset_right = -24.0
+    label.offset_top = 24.0
+    label.offset_bottom = -24.0
+    label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    label.add_theme_font_size_override("font_size", 22)
+    label.add_theme_color_override("font_color", Color.WHITE)
+    panel.add_child(label)
+
+
+func _clear_boot_flag() -> void:
+    if FileAccess.file_exists(BOOT_FLAG_PATH):
+        DirAccess.remove_absolute(ProjectSettings.globalize_path(BOOT_FLAG_PATH))
+
+
+func _viewport_looks_blank() -> bool:
+    if "--simulate-blank" in OS.get_cmdline_user_args():
+        return true
+    var texture := get_viewport().get_texture()
+    if texture == null:
+        return false
+    var image := texture.get_image()
+    if image == null or image.is_empty() or image.get_width() < 100:
+        # If readback is unsupported, do not falsely claim a blank screen.
+        return false
+    var bins: Dictionary = {}
+    var left := int(image.get_width() * 0.12)
+    var right := int(image.get_width() * 0.88)
+    var top := int(image.get_height() * 0.27)
+    var bottom := int(image.get_height() * 0.68)
+    var step_x := maxi(1, int(image.get_width() / 48))
+    var step_y := maxi(1, int(image.get_height() / 60))
+    for y in range(top, bottom, step_y):
+        for x in range(left, right, step_x):
+            var c := image.get_pixel(x, y)
+            bins["%02x%02x%02x" % [
+                int(clampf(c.r, 0.0, 1.0) * 15.0),
+                int(clampf(c.g, 0.0, 1.0) * 15.0),
+                int(clampf(c.b, 0.0, 1.0) * 15.0)
+            ]] = true
+    return bins.size() < 6
 
 func _process(delta: float) -> void:
     # Resume/background frame gaps must not teleport traffic or scenery across the player.
@@ -110,7 +461,7 @@ func _process(delta: float) -> void:
     for segment in road_segments:
         segment.position.z += world_speed * delta
         if segment.position.z > SEGMENT_LENGTH * 0.72:
-            segment.position.z -= SEGMENT_LENGTH * SEGMENT_COUNT
+            segment.position.z -= SEGMENT_LENGTH * segment_count
 
     for prop in scenery:
         prop.position.z += world_speed * delta
@@ -160,10 +511,10 @@ func _make_environment() -> void:
         "res://assets/textures/autumn_field_puresky.hdr",
         "res://assets/textures/autumn_field_puresky.exr"
     ]:
-        if ResourceLoader.exists(sky_path):
-            hdri_texture = load(sky_path) as Texture2D
-            if hdri_texture != null:
-                break
+        var cached_sky := _asset(sky_path) as Texture2D
+        if cached_sky != null:
+            hdri_texture = cached_sky
+            break
 
     if hdri_texture != null:
         var panorama_material := PanoramaSkyMaterial.new()
@@ -190,7 +541,7 @@ func _make_environment() -> void:
     sun.rotation_degrees = Vector3(-48.0, -28.0, 0.0)
     sun.light_color = Color(1.0, 0.91, 0.73)
     sun.light_energy = 0.88
-    sun.shadow_enabled = true
+    sun.shadow_enabled = tier < Tier.SAFE
     # One shadow split is cheaper than the multi-split default on mobile GPUs.
     sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
     sun.directional_shadow_max_distance = 65.0
@@ -254,17 +605,23 @@ func _make_terrain_banks() -> void:
 
 
 func _make_terrain_bank(side: float, terrain_noise: FastNoiseLite) -> void:
-    const X_SEGMENTS: int = 36
-    const Z_SEGMENTS: int = 100
+    var x_segments: int = 36
+    var z_segments: int = 100
+    if tier == Tier.LITE:
+        x_segments = 24
+        z_segments = 70
+    elif tier == Tier.SAFE:
+        x_segments = 12
+        z_segments = 35
     var vertices := PackedVector3Array()
     var uvs := PackedVector2Array()
     var indices := PackedInt32Array()
 
-    for zi in range(Z_SEGMENTS + 1):
-        var z_amount: float = float(zi) / float(Z_SEGMENTS)
+    for zi in range(z_segments + 1):
+        var z_amount: float = float(zi) / float(z_segments)
         var z: float = lerpf(24.0, -360.0, z_amount)
-        for xi in range(X_SEGMENTS + 1):
-            var x_amount: float = float(xi) / float(X_SEGMENTS)
+        for xi in range(x_segments + 1):
+            var x_amount: float = float(xi) / float(x_segments)
             var x_abs: float = lerpf(6.42, 92.0, x_amount)
             var rise: float = smoothstep(14.0, 29.0, x_abs)
             var outer_fade: float = 1.0 - smoothstep(76.0, 92.0, x_abs)
@@ -276,11 +633,11 @@ func _make_terrain_bank(side: float, terrain_noise: FastNoiseLite) -> void:
             # World-space scaling gives the same natural grass tile size on both banks.
             uvs.append(Vector2(x_abs / 8.0, z / 8.0))
 
-    for zi in range(Z_SEGMENTS):
-        for xi in range(X_SEGMENTS):
-            var a: int = zi * (X_SEGMENTS + 1) + xi
+    for zi in range(z_segments):
+        for xi in range(x_segments):
+            var a: int = zi * (x_segments + 1) + xi
             var b: int = a + 1
-            var c: int = a + X_SEGMENTS + 1
+            var c: int = a + x_segments + 1
             var d: int = c + 1
             if side > 0.0:
                 indices.append_array(PackedInt32Array([a, b, c, b, d, c]))
@@ -309,7 +666,7 @@ func _make_terrain_bank(side: float, terrain_noise: FastNoiseLite) -> void:
 
 
 func _make_road() -> void:
-    for i in range(SEGMENT_COUNT):
+    for i in range(segment_count):
         var segment := Node3D.new()
         segment.name = "RoadSegment_%02d" % i
         segment.position.z = 18.0 - float(i) * SEGMENT_LENGTH
@@ -339,7 +696,7 @@ func _make_road() -> void:
 
 func _make_roadside_scenery() -> void:
     # Use fewer high-detail tree instances to preserve frame time on mobile.
-    for i in range(26):
+    for i in range(26 if tier <= Tier.MEDIUM else (16 if tier == Tier.LITE else 8))
         var side: float = -1.0 if i % 2 == 0 else 1.0
         var prop := _make_tree(
             Vector3(
@@ -596,6 +953,7 @@ func _make_ui() -> void:
     add_child(layer)
 
     var ui := Control.new()
+    ui_root = ui
     ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     ui.mouse_filter = Control.MOUSE_FILTER_PASS
     layer.add_child(ui)
@@ -826,10 +1184,12 @@ func _get_grass_material() -> StandardMaterial3D:
     # Natural leafy-ground albedo, a matte finish, and no fine normal map prevent
     # distracting high-frequency sparkle as the camera travels down the road.
     var grass := _mat(Color(0.70, 0.88, 0.54), 0.99)
-    if ResourceLoader.exists("res://assets/textures/leafy_grass_diffuse.jpg"):
-        grass.albedo_texture = load("res://assets/textures/leafy_grass_diffuse.jpg") as Texture2D
-    if ResourceLoader.exists("res://assets/textures/leafy_grass_roughness.jpg"):
-        grass.roughness_texture = load("res://assets/textures/leafy_grass_roughness.jpg") as Texture2D
+    var grass_diffuse := _asset("res://assets/textures/leafy_grass_diffuse.jpg") as Texture2D
+    var grass_roughness := _asset("res://assets/textures/leafy_grass_roughness.jpg") as Texture2D
+    if grass_diffuse != null:
+        grass.albedo_texture = grass_diffuse
+    if grass_roughness != null:
+        grass.roughness_texture = grass_roughness
     grass.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
     # Repeat the 1K PBR tile across the large terrain plane instead of stretching it.
     grass.uv1_scale = Vector3(28.0, 1.0, 66.0)
@@ -841,15 +1201,18 @@ func _get_road_material() -> StandardMaterial3D:
     if road_material_cache != null:
         return road_material_cache
     var road := _mat(Color(0.72, 0.74, 0.78), 0.94)
-    if ResourceLoader.exists("res://assets/textures/asphalt_track_diffuse.jpg"):
-        road.albedo_texture = load("res://assets/textures/asphalt_track_diffuse.jpg") as Texture2D
+    var road_diffuse := _asset("res://assets/textures/asphalt_track_diffuse.jpg") as Texture2D
+    var road_normal := _asset("res://assets/textures/asphalt_track_normal.jpg") as Texture2D
+    var road_roughness := _asset("res://assets/textures/asphalt_track_roughness.jpg") as Texture2D
+    if road_diffuse != null:
+        road.albedo_texture = road_diffuse
         road.uv1_scale = Vector3(1.0, 1.0, 7.0)
         road.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
-    if ResourceLoader.exists("res://assets/textures/asphalt_track_normal.jpg"):
+    if road_normal != null:
         road.normal_enabled = true
-        road.normal_texture = load("res://assets/textures/asphalt_track_normal.jpg") as Texture2D
-    if ResourceLoader.exists("res://assets/textures/asphalt_track_roughness.jpg"):
-        road.roughness_texture = load("res://assets/textures/asphalt_track_roughness.jpg") as Texture2D
+        road.normal_texture = road_normal
+    if road_roughness != null:
+        road.roughness_texture = road_roughness
     road_material_cache = road
     return road_material_cache
 
@@ -888,8 +1251,8 @@ func _make_sphere(scale_value: Vector3, position_value: Vector3, color_value: Co
     var sphere_mesh := SphereMesh.new()
     sphere_mesh.radius = 1.0
     sphere_mesh.height = 2.0
-    sphere_mesh.radial_segments = 32
-    sphere_mesh.rings = 20
+    sphere_mesh.radial_segments = sphere_radial
+    sphere_mesh.rings = sphere_rings
     var instance := MeshInstance3D.new()
     instance.mesh = sphere_mesh
     instance.scale = scale_value
