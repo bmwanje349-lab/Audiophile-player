@@ -4,6 +4,9 @@ extends Node3D
 
 const SEGMENT_LENGTH: float = 36.0
 const SEGMENT_COUNT: int = 14
+const TRAFFIC_POOL_SIZE: int = 6
+const COIN_POOL_SIZE: int = 12
+const HUD_REFRESH_INTERVAL: float = 0.10
 
 # Adaptive startup/recovery tiers from the blank-screen fix ZIP.
 enum Tier { FULL, MEDIUM, LITE, SAFE }
@@ -21,6 +24,15 @@ const CAR_PAINTS: Array[Color] = [
 
 var rng := RandomNumberGenerator.new()
 var material_cache: Dictionary = {}
+var box_mesh_cache: Dictionary = {}
+var traffic_pool: Array[Node3D] = []
+var coin_pool: Array[Node3D] = []
+var coin_rim_mesh: CylinderMesh
+var coin_face_mesh: CylinderMesh
+var coin_glint_mesh: SphereMesh
+var coin_rim_material: StandardMaterial3D
+var coin_face_material: StandardMaterial3D
+var coin_glint_material: StandardMaterial3D
 var road_material_cache: StandardMaterial3D
 var detailed_car_scene: PackedScene
 var traffic_car_scenes: Array[PackedScene] = []
@@ -48,6 +60,7 @@ var traffic_timer: float = 1.0
 var coin_timer: float = 2.7
 var game_over: bool = false
 var camera_bump: float = 0.0
+var hud_refresh_timer: float = 0.0
 
 var tier: int = Tier.FULL
 var is_mobile: bool = false
@@ -102,6 +115,10 @@ func _ready() -> void:
     player_car = _make_car(Color(0.03, 0.86, 0.78), true)
     player_car.position = Vector3(LANE_X[player_lane], 0.0, 3.0)
     add_child(player_car)
+
+    _set_loading("Preparing traffic and collectibles…")
+    await get_tree().process_frame
+    await _prepare_runtime_pools()
 
     world_ready = true
     _update_hud()
@@ -254,6 +271,34 @@ func _load_assets_async() -> void:
             nature_tree_scenes.append(tree_scene)
 
 
+func _prepare_runtime_pools() -> void:
+    # Instantiate detailed imported models and coin meshes behind the loading
+    # overlay, never in the middle of a race. Hidden pool entries are reused.
+    for i in range(TRAFFIC_POOL_SIZE):
+        var pooled_car := _make_car(CAR_PAINTS[i % CAR_PAINTS.size()], false)
+        pooled_car.name = "PooledTrafficCar_%02d" % i
+        pooled_car.position = Vector3(0.0, -1000.0, 0.0)
+        pooled_car.visible = false
+        pooled_car.process_mode = Node.PROCESS_MODE_DISABLED
+        add_child(pooled_car)
+        traffic_pool.append(pooled_car)
+        if i % 2 == 1:
+            _set_loading("Preparing traffic…  %d / %d" % [i + 1, TRAFFIC_POOL_SIZE])
+            await get_tree().process_frame
+
+    for i in range(COIN_POOL_SIZE):
+        var pooled_coin := _make_coin()
+        pooled_coin.name = "PooledCoin_%02d" % i
+        pooled_coin.position = Vector3(0.0, -1000.0, 0.0)
+        pooled_coin.visible = false
+        pooled_coin.process_mode = Node.PROCESS_MODE_DISABLED
+        add_child(pooled_coin)
+        coin_pool.append(pooled_coin)
+        if i % 4 == 3:
+            _set_loading("Preparing collectibles…  %d / %d" % [i + 1, COIN_POOL_SIZE])
+            await get_tree().process_frame
+
+
 func _make_loading_overlay() -> void:
     loading_layer = CanvasLayer.new()
     loading_layer.layer = 20
@@ -404,33 +449,21 @@ func _clear_boot_flag() -> void:
 
 
 func _viewport_looks_blank() -> bool:
+    # Keep the simulation hook for CI/recovery tests. A synchronous GPU readback
+    # (get_texture().get_image()) can stall the render thread for a visible hitch
+    # on mobile, so normal gameplay checks scene/camera readiness instead.
     if "--simulate-blank" in OS.get_cmdline_user_args():
         return true
-    var texture := get_viewport().get_texture()
-    if texture == null:
-        return false
-    var image := texture.get_image()
-    if image == null or image.is_empty() or image.get_width() < 100:
-        # If readback is unsupported, do not falsely claim a blank screen.
-        return false
-    var bins: Dictionary = {}
-    var left := int(image.get_width() * 0.12)
-    var right := int(image.get_width() * 0.88)
-    var top := int(image.get_height() * 0.27)
-    var bottom := int(image.get_height() * 0.68)
-    var step_x := maxi(1, int(image.get_width() / 48))
-    var step_y := maxi(1, int(image.get_height() / 60))
-    for y in range(top, bottom, step_y):
-        for x in range(left, right, step_x):
-            var c := image.get_pixel(x, y)
-            bins["%02x%02x%02x" % [
-                int(clampf(c.r, 0.0, 1.0) * 15.0),
-                int(clampf(c.g, 0.0, 1.0) * 15.0),
-                int(clampf(c.b, 0.0, 1.0) * 15.0)
-            ]] = true
-    return bins.size() < 6
+    var viewport := get_viewport()
+    if viewport == null or not is_instance_valid(camera):
+        return true
+    if viewport.get_camera_3d() != camera:
+        return true
+    if road_segments.is_empty() or not is_instance_valid(player_car):
+        return true
+    return player_car.find_children("*", "MeshInstance3D", true, false).is_empty()
 
-func _process(delta: float) -> void:
+func _physics_process(delta: float) -> void:
     # Resume/background frame gaps must not teleport traffic or scenery across the player.
     delta = minf(delta, 0.05)
 
@@ -467,6 +500,7 @@ func _process(delta: float) -> void:
         segment.position.z += world_speed * delta
         if segment.position.z > SEGMENT_LENGTH * 0.72:
             segment.position.z -= SEGMENT_LENGTH * segment_count
+            segment.reset_physics_interpolation()
 
     for prop in scenery:
         prop.position.z += world_speed * delta
@@ -474,6 +508,7 @@ func _process(delta: float) -> void:
             var side: float = -1.0 if prop.position.x < 0.0 else 1.0
             prop.position.z = -160.0 - rng.randf_range(0.0, 45.0)
             prop.position.x = side * rng.randf_range(8.0, 14.0)
+            prop.reset_physics_interpolation()
 
     player_car.position.x = move_toward(
         player_car.position.x, LANE_X[player_lane], delta * 14.0
@@ -496,7 +531,10 @@ func _process(delta: float) -> void:
 
     _update_traffic(delta)
     _update_coins(delta)
-    _update_hud()
+    hud_refresh_timer += delta
+    if hud_refresh_timer >= HUD_REFRESH_INTERVAL:
+        hud_refresh_timer = fmod(hud_refresh_timer, HUD_REFRESH_INTERVAL)
+        _update_hud()
 
 
 func _make_environment() -> void:
@@ -671,33 +709,69 @@ func _make_terrain_bank(side: float, terrain_noise: FastNoiseLite) -> void:
 
 
 func _make_road() -> void:
+    # Draw repeated road paint/curbs through MultiMesh batches. The geometry,
+    # materials, spacing and colours stay the same, but hundreds of individual
+    # MeshInstance draw calls collapse to five batches per road segment.
+    var edge_material := _mat(Color(1.0, 0.82, 0.35), 0.7)
+    var lane_material := _mat(Color(0.96, 0.97, 0.89), 0.75)
+    var red_curb_material := _mat(Color(1.0, 0.36, 0.31), 0.7)
+    var white_curb_material := _mat(Color(1.0, 0.95, 0.81), 0.7)
+
     for i in range(segment_count):
         var segment := Node3D.new()
         segment.name = "RoadSegment_%02d" % i
         segment.position.z = 18.0 - float(i) * SEGMENT_LENGTH
         _add_box(segment, Vector3(12.0, 0.22, SEGMENT_LENGTH), Vector3(0.0, -0.15, 0.0), _get_road_material(), false)
-        _add_box(segment, Vector3(0.24, 0.035, SEGMENT_LENGTH), Vector3(-5.86, -0.025, 0.0), _mat(Color(1.0, 0.82, 0.35), 0.7), false)
-        _add_box(segment, Vector3(0.24, 0.035, SEGMENT_LENGTH), Vector3(5.86, -0.025, 0.0), _mat(Color(1.0, 0.82, 0.35), 0.7), false)
 
+        var edge_transforms: Array[Transform3D] = []
+        for edge_x in [-5.86, 5.86]:
+            edge_transforms.append(Transform3D(Basis.IDENTITY, Vector3(edge_x, -0.025, 0.0)))
+        _add_multimesh_boxes(segment, Vector3(0.24, 0.035, SEGMENT_LENGTH), edge_transforms, edge_material)
+
+        var divider_transforms: Array[Transform3D] = []
         for dash_index in range(6):
             var dash_z: float = -SEGMENT_LENGTH * 0.42 + float(dash_index) * 6.0
             for divider_x in [-1.9, 1.9]:
-                _add_box(
-                    segment, Vector3(0.105, 0.035, 2.8),
-                    Vector3(divider_x, -0.025, dash_z),
-                    _mat(Color(0.96, 0.97, 0.89), 0.75),
-                    false
-                )
+                divider_transforms.append(Transform3D(Basis.IDENTITY, Vector3(divider_x, -0.025, dash_z)))
+        _add_multimesh_boxes(segment, Vector3(0.105, 0.035, 2.8), divider_transforms, lane_material)
 
+        var red_curb_transforms: Array[Transform3D] = []
+        var white_curb_transforms: Array[Transform3D] = []
         for curb_index in range(6):
             var curb_z: float = -SEGMENT_LENGTH * 0.42 + float(curb_index) * 6.0
-            var curb_color: Color = Color(1.0, 0.36, 0.31) if curb_index % 2 == 0 else Color(1.0, 0.95, 0.81)
-            _add_box(segment, Vector3(0.28, 0.13, 2.7), Vector3(-6.08, -0.02, curb_z), _mat(curb_color, 0.7), false)
-            _add_box(segment, Vector3(0.28, 0.13, 2.7), Vector3(6.08, -0.02, curb_z), _mat(curb_color, 0.7), false)
+            for curb_x in [-6.08, 6.08]:
+                var curb_transform := Transform3D(Basis.IDENTITY, Vector3(curb_x, -0.02, curb_z))
+                if curb_index % 2 == 0:
+                    red_curb_transforms.append(curb_transform)
+                else:
+                    white_curb_transforms.append(curb_transform)
+
+        var curb_size := Vector3(0.28, 0.13, 2.7)
+        _add_multimesh_boxes(segment, curb_size, red_curb_transforms, red_curb_material)
+        _add_multimesh_boxes(segment, curb_size, white_curb_transforms, white_curb_material)
 
         add_child(segment)
         road_segments.append(segment)
 
+
+func _add_multimesh_boxes(parent: Node3D, size: Vector3, transforms: Array[Transform3D], material_value: Material) -> MultiMeshInstance3D:
+    if transforms.is_empty():
+        return null
+    var multimesh := MultiMesh.new()
+    multimesh.transform_format = MultiMesh.TRANSFORM_3D
+    multimesh.mesh = _get_box_mesh(size)
+    multimesh.instance_count = transforms.size()
+    for i in range(transforms.size()):
+        multimesh.set_instance_transform(i, transforms[i])
+    # Explicit bounds include the full segment so batched markings remain visible
+    # while the road recycles past the camera.
+    multimesh.custom_aabb = AABB(Vector3(-7.0, -1.0, -19.0), Vector3(14.0, 4.0, 38.0))
+    var instance := MultiMeshInstance3D.new()
+    instance.multimesh = multimesh
+    instance.material_override = material_value
+    instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    parent.add_child(instance)
+    return instance
 
 func _make_roadside_scenery() -> void:
     # Use fewer high-detail tree instances to preserve frame time on mobile.
@@ -851,12 +925,88 @@ func _make_car(paint: Color, is_player: bool) -> Node3D:
 
 
 func _spawn_traffic() -> void:
+    # Reuse a prebuilt imported car. Instantiating a GLB during the live race can
+    # block the main thread when its meshes/materials are attached to the scene.
+    var car: Node3D
+    for pooled_car in traffic_pool:
+        if is_instance_valid(pooled_car) and not pooled_car.visible:
+            car = pooled_car
+            break
+    if car == null:
+        # The pool is sized for the maximum cars normally on-screen. If a device
+        # has an unusually long frame, defer a spawn instead of allocating a new car.
+        traffic_timer = 0.18
+        return
+
     var lane: int = rng.randi_range(0, 2)
-    var car := _make_car(CAR_PAINTS[rng.randi_range(0, CAR_PAINTS.size() - 1)], false)
     car.position = Vector3(LANE_X[lane], 0.0, -142.0)
-    add_child(car)
+    car.visible = true
+    car.process_mode = Node.PROCESS_MODE_INHERIT
+    car.reset_physics_interpolation()
     traffic.append({"node": car, "lane": lane})
 
+
+func _make_coin() -> Node3D:
+    # Shared mesh/material resources keep the gold coin's detail while avoiding
+    # dozens of duplicate mesh/material allocations during a race.
+    if coin_rim_mesh == null:
+        coin_rim_mesh = CylinderMesh.new()
+        coin_rim_mesh.top_radius = 0.61
+        coin_rim_mesh.bottom_radius = 0.61
+        coin_rim_mesh.height = 0.16
+        coin_rim_mesh.radial_segments = 16
+        coin_face_mesh = CylinderMesh.new()
+        coin_face_mesh.top_radius = 0.47
+        coin_face_mesh.bottom_radius = 0.47
+        coin_face_mesh.height = 0.175
+        coin_face_mesh.radial_segments = 16
+        coin_glint_mesh = SphereMesh.new()
+        coin_glint_mesh.radial_segments = 12
+        coin_glint_mesh.rings = 8
+        coin_rim_material = _mat(Color(0.76, 0.37, 0.035), 0.22, 0.82)
+        coin_face_material = _mat(Color(1.0, 0.77, 0.11), 0.2, 0.72, Color(0.40, 0.20, 0.01))
+        coin_glint_material = _mat(Color(1.0, 0.93, 0.41), 0.25, 0.55)
+
+    var coin := Node3D.new()
+    coin.name = "GoldCoin"
+    var rim := MeshInstance3D.new()
+    rim.mesh = coin_rim_mesh
+    rim.rotation.x = PI * 0.5
+    rim.material_override = coin_rim_material
+    coin.add_child(rim)
+    var face := MeshInstance3D.new()
+    face.mesh = coin_face_mesh
+    face.rotation.x = PI * 0.5
+    face.material_override = coin_face_material
+    coin.add_child(face)
+    var glint := MeshInstance3D.new()
+    glint.mesh = coin_glint_mesh
+    glint.scale = Vector3(0.13, 0.13, 0.13)
+    glint.position = Vector3(0.0, 0.0, -0.10)
+    glint.material_override = coin_glint_material
+    coin.add_child(glint)
+    return coin
+
+
+func _spawn_coin_train() -> void:
+    var available_coins: Array[Node3D] = []
+    for pooled_coin in coin_pool:
+        if is_instance_valid(pooled_coin) and not pooled_coin.visible:
+            available_coins.append(pooled_coin)
+            if available_coins.size() >= 4:
+                break
+    if available_coins.size() < 4:
+        return
+
+    var lane: int = rng.randi_range(0, 2)
+    for i in range(4):
+        var coin: Node3D = available_coins[i]
+        coin.position = Vector3(LANE_X[lane], 1.35, -121.0 - float(i) * 3.1)
+        coin.rotation = Vector3.ZERO
+        coin.visible = true
+        coin.process_mode = Node.PROCESS_MODE_INHERIT
+        coin.reset_physics_interpolation()
+        coin_rows.append({"node": coin, "lane": lane, "bob_phase": rng.randf_range(0.0, TAU)})
 
 func _spawn_coin_train() -> void:
     var lane: int = rng.randi_range(0, 2)
@@ -895,17 +1045,19 @@ func _update_traffic(delta: float) -> void:
         var car: Node3D = item["node"]
         car.position.z += world_speed * delta
         if car.position.z > 26.0:
-            car.queue_free()
+            car.visible = false
+            car.process_mode = Node.PROCESS_MODE_DISABLED
+            car.position = Vector3(0.0, -1000.0, 0.0)
+            car.reset_physics_interpolation()
             traffic.remove_at(i)
             continue
         var lateral_distance: float = absf(car.position.x - player_car.position.x)
         var longitudinal_distance: float = absf(car.position.z - player_car.position.z)
-        # The player and traffic body widths total 1.82 m; body lengths total 3.25 m.
-        # Slightly conservative bounds avoid a crash being reported before visible contact.
+        # Check actual car positions rather than the target lane. The player may
+        # still be visibly moving between lanes when a traffic car arrives.
         if lateral_distance <= 1.82 and longitudinal_distance <= 3.20:
             _crash()
             return
-
 
 func _update_coins(delta: float) -> void:
     for i in range(coin_rows.size() - 1, -1, -1):
@@ -915,15 +1067,20 @@ func _update_coins(delta: float) -> void:
         coin.rotation.y += delta * 2.8
         coin.position.y = 1.35 + sin(distance_run * 0.12 + float(item["bob_phase"])) * 0.10
         if coin.position.z > 2.1:
-            coin.queue_free()
+            coin.visible = false
+            coin.process_mode = Node.PROCESS_MODE_DISABLED
+            coin.position = Vector3(0.0, -1000.0, 0.0)
+            coin.reset_physics_interpolation()
             coin_rows.remove_at(i)
             continue
         if absf(coin.position.x - player_car.position.x) <= 1.45 and absf(coin.position.z - player_car.position.z) < 1.7:
             coins_collected += 1
-            coin.queue_free()
+            coin.visible = false
+            coin.process_mode = Node.PROCESS_MODE_DISABLED
+            coin.position = Vector3(0.0, -1000.0, 0.0)
+            coin.reset_physics_interpolation()
             coin_rows.remove_at(i)
             camera_bump = minf(0.12, camera_bump + 0.035)
-
 
 func _crash() -> void:
     game_over = true
@@ -936,26 +1093,41 @@ func _crash() -> void:
 
 func _restart() -> void:
     for item in traffic:
-        (item["node"] as Node3D).queue_free()
+        var car := item["node"] as Node3D
+        if is_instance_valid(car):
+            car.visible = false
+            car.process_mode = Node.PROCESS_MODE_DISABLED
+            car.position = Vector3(0.0, -1000.0, 0.0)
+            car.reset_physics_interpolation()
     for item in coin_rows:
-        (item["node"] as Node3D).queue_free()
+        var coin := item["node"] as Node3D
+        if is_instance_valid(coin):
+            coin.visible = false
+            coin.process_mode = Node.PROCESS_MODE_DISABLED
+            coin.position = Vector3(0.0, -1000.0, 0.0)
+            coin.reset_physics_interpolation()
     traffic.clear()
     coin_rows.clear()
     player_lane = 1
     player_car.position = Vector3(LANE_X[player_lane], 0.0, 3.0)
     player_car.rotation = Vector3.ZERO
+    player_car.reset_physics_interpolation()
     world_speed = 24.0
     distance_run = 0.0
     score = 0
     coins_collected = 0
     traffic_timer = 1.0
     coin_timer = 2.7
+    hud_refresh_timer = 0.0
     game_over = false
     camera_bump = 0.0
+    if is_instance_valid(camera):
+        camera.position = Vector3(0.0, 6.2, 13.0)
+        camera.look_at(Vector3(0.0, 0.65, -25.0), Vector3.UP)
+        camera.reset_physics_interpolation()
     game_over_panel.visible = false
     steering_hint.text = "TAP LEFT / RIGHT TO CHANGE LANES"
     _update_hud()
-
 
 func _make_ui() -> void:
     var layer := CanvasLayer.new()
@@ -1183,9 +1355,13 @@ func _steer_right() -> void:
 
 func _update_hud() -> void:
     if is_instance_valid(score_label):
-        score_label.text = "SCORE  %06d" % score
+        var new_score_text: String = "SCORE  %06d" % score
+        if score_label.text != new_score_text:
+            score_label.text = new_score_text
     if is_instance_valid(coins_label):
-        coins_label.text = "COINS  %02d" % coins_collected
+        var new_coins_text: String = "COINS  %02d" % coins_collected
+        if coins_label.text != new_coins_text:
+            coins_label.text = new_coins_text
 
 
 func _get_grass_material() -> StandardMaterial3D:
@@ -1244,9 +1420,17 @@ func _mat(color: Color, roughness: float = 0.72, metallic: float = 0.0, emission
     return material
 
 
-func _add_box(parent: Node3D, size: Vector3, position_value: Vector3, material_value: Material, casts_shadow: bool = true) -> MeshInstance3D:
+func _get_box_mesh(size: Vector3) -> BoxMesh:
+    var key: String = "%.3f_%.3f_%.3f" % [size.x, size.y, size.z]
+    if box_mesh_cache.has(key):
+        return box_mesh_cache[key] as BoxMesh
     var mesh := BoxMesh.new()
     mesh.size = size
+    box_mesh_cache[key] = mesh
+    return mesh
+
+
+func _add_box(parent: Node3D, size: Vector3, position_value: Vector3, material_value: Material, casts_shadow: bool = true) -> MeshInstance3D:
     var instance := MeshInstance3D.new()
     instance.mesh = mesh
     instance.position = position_value
