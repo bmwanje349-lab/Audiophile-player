@@ -18,7 +18,16 @@ func _run_smoke_test() -> void:
     root.add_child(game)
     current_scene = game
 
-    # Allow _ready(), active-camera selection and multiple render frames to run.
+    # Startup now loads imported assets in the background; wait for the staged
+    # world builder rather than treating the loading screen as a blank scene.
+    var wait_started_ms := Time.get_ticks_msec()
+    while not bool(game.get("world_ready")):
+        if Time.get_ticks_msec() - wait_started_ms > 120000:
+            _fail("The game never finished building its 3D world.")
+            return
+        await process_frame
+
+    # Allow active-camera selection and multiple render frames to run.
     for frame in range(8):
         await process_frame
     await RenderingServer.frame_post_draw
