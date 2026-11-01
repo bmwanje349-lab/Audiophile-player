@@ -24,3 +24,10 @@
 - DSP centre-cancel has a physical limit (~8 dB oracle on the test clip, 11.7 dB vocal attenuation here on the weighted result); for near-total removal use AI mode.
 - The dynamic-time-axis MDX model (faster neural live) and a seamless DSP→AI hand-off were prototyped but not shipped.
 - Root-level `ProfessionalStereoWidenerDSP_v10.h` is a stale duplicate (not built); delete it.
+
+
+## Poweramp StereoWide reference curve (experimental branch)
+- Recovered the native StereoWide control mapping and sample transform from the Poweramp ARM64 library: the side component is multiplied by `g = 1 + 2*x`, while the mid/mono component is preserved.
+- The Audiophile Player width control remains 0–250% with 100% as unchanged stereo. Its 100–250% interval now maps to the same 1×–3× side-gain range; values below 100% retain the existing narrowing behaviour.
+- The existing low-band bass protection, mid/high decorrelation, Haas stage, auto-level, and linked true-peak limiter remain in place. PEQ and its code are untouched.
+- Added `host_tests/poweramp_width_curve_test.cpp` for the width mapping and mono-sum invariant.
