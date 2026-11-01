@@ -61,6 +61,25 @@ inline float safeSample(float x) noexcept {
     return std::isfinite(x) ? x : 0.0f;
 }
 
+/*
+    Poweramp StereoWide reference transfer curve.
+
+    The recovered native control maps a normalized amount x in [0, 1]
+    to a side multiplier g = 1 + 2*x.  This player exposes width as
+    0..250%, with 100% representing unchanged stereo.  Map the expansion
+    interval 100..250% onto the same native 1..3 side-gain interval,
+    while retaining the existing 0..100% narrowing behaviour.
+
+    The low-frequency side band is still capped separately in process()
+    to preserve the player's bass-mono protection.
+*/
+inline float powerampSideGain(float width) noexcept {
+    const float w = clampf(width, 0.0f, 2.5f);
+    if (w <= 1.0f) return w;
+    const float x = (w - 1.0f) / 1.5f;
+    return 1.0f + 2.0f * x;
+}
+
 inline float dbToGain(float db) noexcept {
     return std::pow(10.0f, db * 0.05f);
 }
@@ -2541,6 +2560,7 @@ public:
             enabled_.load(std::memory_order_relaxed) ? 1.0f : 0.0f);
 
         const float width = width_.process();
+        const float sideGain = powerampSideGain(width);
         const float lowFc = lowFc_.process();
         const float highFcRaw = highFc_.process();
         const float highFc = std::max(lowFc * 1.5f, highFcRaw);
@@ -2579,9 +2599,16 @@ public:
         updateBandMeters(mM, sM, 1);
         updateBandMeters(mH, sH, 2);
 
-        float outSL = sL * std::min(width, 1.0f);
-        float outSM = sM * std::min(width, 1.0f);
-        float outSH = sH * std::min(width, 1.0f);
+        /*
+            The Poweramp reference path scales the M/S side component with
+            g = 1 + 2*x.  Here, the app's 100..250% width interval maps to
+            x = (width - 1) / 1.5, giving side gains 1..3.  Narrowing below
+            100% retains the previous width-as-attenuation behaviour.
+            Bass protection deliberately prevents expansion of the low band.
+        */
+        float outSL = sL * std::min(sideGain, 1.0f);
+        float outSM = sM * std::min(sideGain, 1.0f);
+        float outSH = sH * std::min(sideGain, 1.0f);
 
         if (width > 1.0f) {
             const float added = width - 1.0f;
@@ -2609,13 +2636,13 @@ public:
             */
             const float dM = midDiffuser_.process(mM);
             const float dH = highDiffuser_.process(mH);
-            const float g = 0.35f + 0.65f * transientSafe;
+            const float diffusionGain = 0.35f + 0.65f * transientSafe;
 
             outSL = sL;
-            outSM = sM * (1.0f + 0.35f * added * g)
-                  + added * 0.08f * g * dM;
-            outSH = sH * (1.0f + 0.55f * added * g)
-                  + added * 0.30f * g * dH;
+            outSM = sM * sideGain
+                  + added * 0.08f * diffusionGain * dM;
+            outSH = sH * sideGain
+                  + added * 0.30f * diffusionGain * dH;
         }
 
         const float outM = mL + mM + mH;
