@@ -24,7 +24,7 @@ int main() {
     for (const auto& c : cases) {
         const float actual = powerampSideGain(c.width);
         if (!near(actual, c.expectedGain)) {
-            std::fprintf(stderr, "width %.3f: got %.7f, expected %.7f\\n",
+            std::fprintf(stderr, "width %.3f: got %.7f, expected %.7f\n",
                          c.width, actual, c.expectedGain);
             return 1;
         }
@@ -40,7 +40,7 @@ int main() {
     const float outL = mid + g * sideL;
     const float outR = mid + g * sideR;
     if (!near(outL + outR, left + right)) {
-        std::fprintf(stderr, "mono-sum invariant failed\\n");
+        std::fprintf(stderr, "mono-sum invariant failed\n");
         return 2;
     }
 
