@@ -387,27 +387,60 @@ class DspActivity : AppCompatActivity() {
         root.addView(featureSlider("Final ceiling", -6f, 0f, LoudnessSettings.ceilingDb, "${format(LoudnessSettings.ceilingDb)} dB") { LoudnessSettings.ceilingDb = it; LoudnessSettings.save(this) })
         root.addView(infoCard("How it works", "Songs are converted to 32-bit float, optionally lifted toward the target loudness, then passed through a look-ahead limiter that guarantees the ceiling is never exceeded - so you get a louder sound without clipping."))
 
-        root.addView(sectionLabel("Core controls"))
-        root.addView(bigSliderCard("Width", 0f, 250f, engine.width * 100f, "${format(engine.width * 100f)}%") { engine.width = it / 100f; saveDsp() })
-        root.addView(bigSliderCard("Effect mix", 0f, 100f, engine.dryWet * 100f, "${format(engine.dryWet * 100f)}%") { engine.dryWet = it / 100f; saveDsp() })
-
-        root.addView(sectionLabel("Bass protection"))
-        root.addView(bigSliderCard("Bass mono point", 20f, 250f, engine.bassMonoFrequencyHz, "${format(engine.bassMonoFrequencyHz)} Hz") { engine.bassMonoFrequencyHz = it; saveDsp() })
-        root.addView(infoCard("Why it is here", "Low frequencies are kept more compatible with stereo playback as width increases. The detailed M/S, crossover and correlation-safety processing remains inside v10."))
-
-        root.addView(sectionLabel("Advanced"))
-        root.addView(featureSlider("Low crossover", 40f, 400f, engine.lowCrossoverHz, "${format(engine.lowCrossoverHz)} Hz") { engine.lowCrossoverHz = it; saveDsp() })
-        root.addView(featureSlider("High crossover", 1000f, 10000f, engine.highCrossoverHz, "${format(engine.highCrossoverHz)} Hz") { engine.highCrossoverHz = it; saveDsp() })
-        root.addView(featureSlider("Haas delay", 0f, 10f, engine.haasDelayMs, "${format(engine.haasDelayMs)} ms") { engine.haasDelayMs = it; saveDsp() })
-        root.addView(featureSlider("Haas mix", 0f, 100f, engine.haasMix * 100f, "${format(engine.haasMix * 100f)}%") { engine.haasMix = it / 100f; saveDsp() })
-        root.addView(featureSlider("Output gain", -12f, 6f, engine.outputGainDb, "${format(engine.outputGainDb)} dB") { engine.outputGainDb = it; saveDsp() })
-        root.addView(featureSlider("Limiter ceiling", -12f, 0f, engine.outputCeilingDb, "${format(engine.outputCeilingDb)} dB") { engine.outputCeilingDb = it; saveDsp() })
+        root.addView(sectionLabel("Stereo algorithm"))
         root.addView(SwitchMaterial(this).apply {
-            text = "Automatic level matching"
-            isChecked = engine.autoLevel
+            text = "Poweramp-compatible Stereo Wide"
+            isChecked = engine.powerampCompatible
             setTextColor(TEXT)
-            setOnCheckedChangeListener { _, on -> engine.autoLevel = on; saveDsp() }
+            setOnCheckedChangeListener { _, on ->
+                engine.powerampCompatible = on
+                saveDsp()
+                recreate()
+            }
         }, LinearLayout.LayoutParams(-1, dp(54)))
+
+        if (engine.powerampCompatible) {
+            root.addView(infoCard(
+                "Recovered M/S algorithm",
+                "Mid = (L + R) / 2; Side = (L - R) / 2. Output L = Mid + g × Side; R = Mid − g × Side. The recovered slider mapping is g = 1 + 2 × (slider / 100). This mode bypasses Auralis crossover, decorrelation, Haas, auto-level and widener limiter stages."
+            ))
+            root.addView(sectionLabel("Poweramp Stereo Wide"))
+            root.addView(bigSliderCard(
+                "Stereo Wide",
+                0f,
+                100f,
+                engine.powerampWidthPercent,
+                "${format(engine.powerampWidthPercent)}%"
+            ) { engine.powerampWidthPercent = it; saveDsp() })
+            root.addView(infoCard(
+                "Slider reference",
+                "0% = g 1.0 (unchanged stereo); 25% = g 1.5; 50% = g 2.0; 75% = g 2.5; 100% = g 3.0."
+            ))
+        } else {
+            root.addView(infoCard(
+                "Auralis enhanced widener",
+                "This is the separate custom three-band mode with bass-side filtering, decorrelation, optional Haas, auto-level and linked true-peak limiting. It is not the recovered Poweramp algorithm."
+            ))
+            root.addView(sectionLabel("Enhanced mode controls"))
+            root.addView(bigSliderCard("Width", 0f, 250f, engine.width * 100f, "${format(engine.width * 100f)}%") { engine.width = it / 100f; saveDsp() })
+            root.addView(bigSliderCard("Effect mix", 0f, 100f, engine.dryWet * 100f, "${format(engine.dryWet * 100f)}%") { engine.dryWet = it / 100f; saveDsp() })
+
+            root.addView(sectionLabel("Bass protection"))
+            root.addView(bigSliderCard("Bass mono point", 20f, 250f, engine.bassMonoFrequencyHz, "${format(engine.bassMonoFrequencyHz)} Hz") { engine.bassMonoFrequencyHz = it; saveDsp() })
+            root.addView(sectionLabel("Advanced enhanced processing"))
+            root.addView(featureSlider("Low crossover", 40f, 400f, engine.lowCrossoverHz, "${format(engine.lowCrossoverHz)} Hz") { engine.lowCrossoverHz = it; saveDsp() })
+            root.addView(featureSlider("High crossover", 1000f, 10000f, engine.highCrossoverHz, "${format(engine.highCrossoverHz)} Hz") { engine.highCrossoverHz = it; saveDsp() })
+            root.addView(featureSlider("Haas delay", 0f, 10f, engine.haasDelayMs, "${format(engine.haasDelayMs)} ms") { engine.haasDelayMs = it; saveDsp() })
+            root.addView(featureSlider("Haas mix", 0f, 100f, engine.haasMix * 100f, "${format(engine.haasMix * 100f)}%") { engine.haasMix = it / 100f; saveDsp() })
+            root.addView(featureSlider("Output gain", -12f, 6f, engine.outputGainDb, "${format(engine.outputGainDb)} dB") { engine.outputGainDb = it; saveDsp() })
+            root.addView(featureSlider("Limiter ceiling", -12f, 0f, engine.outputCeilingDb, "${format(engine.outputCeilingDb)} dB") { engine.outputCeilingDb = it; saveDsp() })
+            root.addView(SwitchMaterial(this).apply {
+                text = "Automatic level matching"
+                isChecked = engine.autoLevel
+                setTextColor(TEXT)
+                setOnCheckedChangeListener { _, on -> engine.autoLevel = on; saveDsp() }
+            }, LinearLayout.LayoutParams(-1, dp(54)))
+        }
 
         root.addView(infoCard("Latency", "Current v10 latency: ${engine.latencyFrames} frames at the active sample rate once the processor is prepared."))
 
