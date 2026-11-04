@@ -113,6 +113,15 @@ jobs:
             -o /tmp/audiophile-widener-host-test
           /tmp/audiophile-widener-host-test
 
+      - name: Verify recovered Poweramp Stereo Wide equations and slider mapping
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -fno-fast-math \
+            -Iapp/src/main/cpp \
+            host_tests/poweramp_stereo_wide_test.cpp \
+            -o /tmp/audiophile-poweramp-stereo-wide-test
+          /tmp/audiophile-poweramp-stereo-wide-test
+
       - name: Run measured-HRTF immersion native regression test
         run: |
           set -euo pipefail

@@ -76,6 +76,18 @@ Java_com_example_peq_WidenerNative_setWidth(JNIEnv*, jclass, jlong h, jfloat v) 
 }
 
 JNIEXPORT void JNICALL
+Java_com_example_peq_WidenerNative_setPowerampCompatible(
+        JNIEnv*, jclass, jlong h, jboolean v) {
+    if (h) engineFrom(h)->setPowerampCompatible(v == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_example_peq_WidenerNative_setPowerampWidthPercent(
+        JNIEnv*, jclass, jlong h, jfloat v) {
+    if (h) engineFrom(h)->setPowerampWidthPercent(v);
+}
+
+JNIEXPORT void JNICALL
 Java_com_example_peq_WidenerNative_setLowCrossoverHz(JNIEnv*, jclass, jlong h, jfloat v) {
     if (h) engineFrom(h)->setLowCrossoverHz(v);
 }

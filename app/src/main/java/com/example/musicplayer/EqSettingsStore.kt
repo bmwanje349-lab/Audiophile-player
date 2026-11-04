@@ -93,6 +93,8 @@ class EqSettingsStore(context: Context) {
     fun saveWidener(w: WidenerEngine) {
         prefs.edit()
             .putBoolean(KEY_W_ENABLED, w.enabled)
+            .putBoolean(KEY_W_POWERAMP_MODE, w.powerampCompatible)
+            .putFloat(KEY_W_POWERAMP_PERCENT, w.powerampWidthPercent)
             .putFloat(KEY_W_WIDTH, w.width)
             .putFloat(KEY_W_LOW, w.lowCrossoverHz)
             .putFloat(KEY_W_HIGH, w.highCrossoverHz)
@@ -110,6 +112,8 @@ class EqSettingsStore(context: Context) {
     fun applyWidener(w: WidenerEngine) {
         migrateCeilings()
         w.enabled = prefs.getBoolean(KEY_W_ENABLED, true)
+        w.powerampCompatible = prefs.getBoolean(KEY_W_POWERAMP_MODE, true)
+        w.powerampWidthPercent = prefs.getFloat(KEY_W_POWERAMP_PERCENT, 0f)
         w.width = prefs.getFloat(KEY_W_WIDTH, 1f)
         w.lowCrossoverHz = prefs.getFloat(KEY_W_LOW, 180f)
         w.highCrossoverHz = prefs.getFloat(KEY_W_HIGH, 3200f)
@@ -150,6 +154,8 @@ class EqSettingsStore(context: Context) {
         private const val KEY_PEQ_TAPS = "peq_taps"
 
         private const val KEY_W_ENABLED = "w_enabled"
+        private const val KEY_W_POWERAMP_MODE = "w_poweramp_mode"
+        private const val KEY_W_POWERAMP_PERCENT = "w_poweramp_percent"
         private const val KEY_W_WIDTH = "w_width"
         private const val KEY_W_LOW = "w_low"
         private const val KEY_W_HIGH = "w_high"
