@@ -2419,6 +2419,18 @@ public:
         enabled_.store(enabled, std::memory_order_relaxed);
     }
 
+    // Poweramp-compatible control: slider is expressed as 0..100 percent.
+    // The recovered conversion is g = 1 + 2 * (percent / 100).
+    void setPowerampWidthPercent(float percent) noexcept {
+        powerampWidthPercent_.store(clampf(percent, 0.0f, 100.0f),
+                                    std::memory_order_relaxed);
+    }
+
+    void setPowerampCompatible(bool enabled) noexcept {
+        powerampCompatible_.store(enabled, std::memory_order_relaxed);
+    }
+
+    // Legacy enhanced widener control, retained for the optional advanced mode.
     void setWidth(float width) noexcept {
         widthTarget_.store(clampf(width, 0.0f, 2.5f),
                            std::memory_order_relaxed);
@@ -2518,6 +2530,20 @@ public:
         if (!prepared_.load(std::memory_order_acquire)) {
             left = 0.0f;
             right = 0.0f;
+            return;
+        }
+
+        // Faithful Poweramp Stereo Wide path. This branch deliberately exits
+        // before the custom crossover, decorrelators, Haas, auto-level and
+        // Auralis limiter. No extra processing is silently added to this mode.
+        if (powerampCompatible_.load(std::memory_order_relaxed)) {
+            const float percent =
+                powerampWidthPercent_.load(std::memory_order_relaxed);
+            const float g = 1.0f + 2.0f * (percent / 100.0f);
+            const float mid = 0.5f * (left + right);
+            const float side = 0.5f * (left - right);
+            left = mid + g * side;
+            right = mid - g * side;
             return;
         }
 
@@ -2804,6 +2830,10 @@ private:
 
     std::atomic<bool> enabled_{true};
     std::atomic<bool> autoLevel_{true};
+
+    // Default to the recovered Poweramp-compatible algorithm.
+    std::atomic<bool> powerampCompatible_{true};
+    std::atomic<float> powerampWidthPercent_{0.0f};
 
     std::atomic<float> widthTarget_{1.0f};
     std::atomic<float> lowTarget_{180.0f};
