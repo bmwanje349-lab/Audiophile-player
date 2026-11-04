@@ -19,6 +19,8 @@ object WidenerNative {
     @JvmStatic external fun reset(handle: Long)
     @JvmStatic external fun setEnabled(handle: Long, enabled: Boolean)
     @JvmStatic external fun setWidth(handle: Long, width: Float)
+    @JvmStatic external fun setPowerampCompatible(handle: Long, enabled: Boolean)
+    @JvmStatic external fun setPowerampWidthPercent(handle: Long, percent: Float)
     @JvmStatic external fun setLowCrossoverHz(handle: Long, hz: Float)
     @JvmStatic external fun setHighCrossoverHz(handle: Long, hz: Float)
     @JvmStatic external fun setBassMonoFrequencyHz(handle: Long, hz: Float)
@@ -50,6 +52,19 @@ object WidenerNative {
 /** Kotlin control facade for ProfessionalStereoWidenerDSP_v10.h. */
 class WidenerEngine : AutoCloseable {
     @Volatile private var handle: Long = WidenerNative.create()
+
+    var powerampCompatible: Boolean = true
+        set(value) {
+            field = value
+            if (handle != 0L) WidenerNative.setPowerampCompatible(handle, value)
+        }
+
+    /** Poweramp Stereo Wide slider, in percent: 0..100 maps to side gain 1..3. */
+    var powerampWidthPercent: Float = 0f
+        set(value) {
+            field = value.coerceIn(0f, 100f)
+            if (handle != 0L) WidenerNative.setPowerampWidthPercent(handle, field)
+        }
 
     var enabled: Boolean = true
         set(value) {
@@ -133,6 +148,8 @@ class WidenerEngine : AutoCloseable {
     }
 
     private fun applyAll() {
+        WidenerNative.setPowerampCompatible(handle, powerampCompatible)
+        WidenerNative.setPowerampWidthPercent(handle, powerampWidthPercent)
         WidenerNative.setEnabled(handle, enabled)
         WidenerNative.setWidth(handle, width)
         WidenerNative.setLowCrossoverHz(handle, lowCrossoverHz)
