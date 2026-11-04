@@ -2537,6 +2537,9 @@ public:
         // before the custom crossover, decorrelators, Haas, auto-level and
         // Auralis limiter. No extra processing is silently added to this mode.
         if (powerampCompatible_.load(std::memory_order_relaxed)) {
+            if (!enabled_.load(std::memory_order_relaxed))
+                return;
+
             const float percent =
                 powerampWidthPercent_.load(std::memory_order_relaxed);
             const float g = 1.0f + 2.0f * (percent / 100.0f);
